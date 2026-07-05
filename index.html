@@ -371,15 +371,19 @@
       </select>
     </div>
     <div class="campo">
-      <label for="f-zona">Região</label>
-      <select id="f-zona"></select>
-    </div>
-    <div class="campo">
       <label for="f-vicariato">Vicariato</label>
       <select id="f-vicariato"></select>
     </div>
     <div class="campo">
-      <label for="f-bairro">Bairro/Cidade</label>
+      <label for="f-zonal">Zonal</label>
+      <select id="f-zonal"></select>
+    </div>
+    <div class="campo">
+      <label for="f-municipio">Município</label>
+      <select id="f-municipio"></select>
+    </div>
+    <div class="campo">
+      <label for="f-bairro">Bairro/Localidade</label>
       <select id="f-bairro"></select>
     </div>
   </section>
@@ -465,7 +469,7 @@ function range(a,b){const r=[];for(let i=a;i<=b;i++)r.push(i);return r;}
 // Para atualizar: edite a planilha e salve. O app
 // recarrega os dados a cada vez que é aberto.
 // ===================================================
-const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQG8yQeC8Zk1ZykvB3q4GJ5W8fAnRXy6AGpOBGjap6orL27FFFDxb8RPQH4OJ5AxQ/pub?gid=1918572236&single=true&output=csv";
+const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRRmznzLcrRbCJlzu6XTnxI6O0lsz15C4yJyFinvJQcwXSFx-OgDGrnDLiBCEqj2Q/pub?gid=379724804&single=true&output=csv";
 
 let DADOS = [];
 let CONTATOS = {};
@@ -545,22 +549,35 @@ function mostrarErro(msg) {
 async function inicializar() {
   mostrarLoading();
 
-  // Google Sheets bloqueia CORS direto; tentamos via proxy e depois direto como fallback
-  const CSV_DIRETO = SHEET_CSV_URL;
-  const CSV_PROXY  = "https://api.allorigins.win/raw?url=" + encodeURIComponent(SHEET_CSV_URL);
+  // Detectar se está rodando localmente (file://) — proxies CORS não funcionam nesse caso
+  const isLocal = location.protocol === "file:";
+
+  const proxies = [
+    "https://corsproxy.io/?" + encodeURIComponent(SHEET_CSV_URL),
+    "https://api.allorigins.win/raw?url=" + encodeURIComponent(SHEET_CSV_URL),
+    "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(SHEET_CSV_URL),
+    SHEET_CSV_URL  // direto como último recurso
+  ];
 
   let text = null;
-  for (const url of [CSV_PROXY, CSV_DIRETO]) {
+  for (const url of proxies) {
     try {
       const resp = await fetch(url, { cache: "no-cache" });
       if (!resp.ok) continue;
-      text = await resp.text();
-      if (text && text.length > 100) break;
+      const t = await resp.text();
+      if (t && t.length > 100) { text = t; break; }
     } catch(e) { /* tenta próximo */ }
   }
 
   if (!text || text.length < 100) {
-    mostrarErro("Não foi possível carregar os dados da planilha. Verifique sua conexão e recarregue a página.");
+    const msgLocal = isLocal
+      ? `<br><br>⚠️ <strong>Você está abrindo o arquivo diretamente do computador (file://).</strong><br>
+         Para o app funcionar com a planilha, hospede-o em um servidor. Opções gratuitas:<br>
+         <a href="https://pages.github.com" target="_blank" style="color:#aac4ff">GitHub Pages</a> &nbsp;|&nbsp;
+         <a href="https://netlify.com" target="_blank" style="color:#aac4ff">Netlify</a> &nbsp;|&nbsp;
+         <a href="https://vercel.com" target="_blank" style="color:#aac4ff">Vercel</a>`
+      : "";
+    mostrarErro("Não foi possível carregar os dados da planilha. Verifique sua conexão e recarregue a página." + msgLocal);
     return;
   }
 
@@ -589,26 +606,25 @@ async function inicializar() {
 
     for (let i = dataStart; i < rows.length; i++) {
       const r = rows[i];
-      const nome     = (r[0] || "").trim();
-      const bairro   = (r[1] || "").trim();
-      const zona     = (r[2] || "").trim();
-      const vicar    = (r[3] || "").trim();
-      const horTxt   = (r[4] || "").trim();
-      const obs      = (r[5] || "").trim();
-      const endereco = (r[6] || "").trim();
-      const telefone = (r[7] || "").trim();
-      const email    = (r[8] || "").trim();
+      // Colunas: A=Paróquia B=Bairro C=Município D=Vicariato E=Zonal F=Horários G=Obs H=Endereço I=Telefone J=E-mail
+      const nome      = (r[0] || "").trim();
+      const bairro    = (r[1] || "").trim();
+      const municipio = (r[2] || "").trim();
+      const vicar     = (r[3] || "").trim();
+      const zonal     = (r[4] || "").trim();
+      const horTxt    = (r[5] || "").trim();
+      const obs       = (r[6] || "").trim();
+      const endereco  = (r[7] || "").trim();
+      const telefone  = (r[8] || "").trim();
+      const email     = (r[9] || "").trim();
 
       if (!nome) continue;
 
       const horarios = parseHorarios(horTxt);
-      if (i < dataStart + 3) console.log(`🏛️ [${i}] nome="${nome}" | horTxt="${horTxt}" | horarios parseados:`, horarios);
-
-      const key = nome + "|" + bairro;
-      DADOS.push({ nome, bairro, zona, vicariato: vicar || null, horarios, obs });
+      const key = nome + "|" + bairro + "|" + municipio;
+      DADOS.push({ nome, bairro, municipio, vicariato: vicar || null, zonal: zonal || null, horarios, obs });
       if (endereco || telefone || email)
         CONTATOS[key] = { endereco, telefone, email };
-      if (vicar) VICARIATOS[key] = vicar;
     }
 
     console.log("✅ DADOS carregados:", DADOS.length, "paróquias");
@@ -643,23 +659,45 @@ function paroquiaTemHorarioEm(p, dia, turno){
   return p.horarios.some(h => (dia==="" || h.dias.includes(Number(dia))) && (turno==="" || turnoDe(h.hora)===turno));
 }
 
-function contatoDe(p){ return CONTATOS[p.nome + "|" + p.bairro] || null; }
+function contatoDe(p){ return CONTATOS[p.nome + "|" + p.bairro + "|" + p.municipio] || null; }
 
 // ===== popular selects (chamado após dados carregados) =====
 function popularFiltros(){
-  const zonas = [...new Set(DADOS.map(p=>p.zona))].sort();
-  const selZona = document.getElementById("f-zona");
-  selZona.innerHTML = '<option value="">Todas as regiões</option>' + zonas.map(z=>`<option value="${z}">${z}</option>`).join("");
-
-  popularBairros("");
-
   const vicariatos = [...new Set(DADOS.map(p=>p.vicariato).filter(Boolean))].sort();
   const selVicariato = document.getElementById("f-vicariato");
   selVicariato.innerHTML = '<option value="">Todos os vicariatos</option>' + vicariatos.map(v=>`<option value="${v}">${v}</option>`).join("");
+
+  popularZonais("");
+  popularMunicipios("","");
+  popularBairros("","","");
 }
 
-function popularBairros(zonaAtual){
-  const lista = [...new Set(DADOS.filter(p=>!zonaAtual||p.zona===zonaAtual).map(p=>p.bairro))].sort();
+function popularZonais(vicAtual){
+  const lista = [...new Set(DADOS.filter(p=>!vicAtual||p.vicariato===vicAtual).map(p=>p.zonal).filter(Boolean))].sort((a,b)=>{
+    const na=parseInt(a), nb=parseInt(b); return na-nb;
+  });
+  const sel = document.getElementById("f-zonal");
+  const atual = sel.value;
+  sel.innerHTML = '<option value="">Todos os zonais</option>' + lista.map(z=>`<option value="${z}">${z}</option>`).join("");
+  if(lista.includes(atual)) sel.value = atual;
+}
+
+function popularMunicipios(vicAtual, zonalAtual){
+  const lista = [...new Set(DADOS.filter(p=>
+    (!vicAtual||p.vicariato===vicAtual) && (!zonalAtual||p.zonal===zonalAtual)
+  ).map(p=>p.municipio).filter(Boolean))].sort();
+  const sel = document.getElementById("f-municipio");
+  const atual = sel.value;
+  sel.innerHTML = '<option value="">Todos os municípios</option>' + lista.map(m=>`<option value="${m}">${m}</option>`).join("");
+  if(lista.includes(atual)) sel.value = atual;
+}
+
+function popularBairros(vicAtual, zonalAtual, municipioAtual){
+  const lista = [...new Set(DADOS.filter(p=>
+    (!vicAtual||p.vicariato===vicAtual) &&
+    (!zonalAtual||p.zonal===zonalAtual) &&
+    (!municipioAtual||p.municipio===municipioAtual)
+  ).map(p=>p.bairro))].sort();
   const selBairro = document.getElementById("f-bairro");
   const atual = selBairro.value;
   selBairro.innerHTML = '<option value="">Todos os bairros</option>' + lista.map(b=>`<option value="${b}">${b}</option>`).join("");
@@ -704,18 +742,20 @@ const contagem = document.getElementById("contagem");
 const hojeDia = new Date().getDay();
 
 function render(){
-  const dia = document.getElementById("f-dia").value;
-  const turno = document.getElementById("f-turno").value;
-  const zona = document.getElementById("f-zona").value;
+  const dia       = document.getElementById("f-dia").value;
+  const turno     = document.getElementById("f-turno").value;
   const vicariato = document.getElementById("f-vicariato").value;
-  const bairro = document.getElementById("f-bairro").value;
-  const busca = document.getElementById("f-busca").value.trim().toLowerCase();
+  const zonal     = document.getElementById("f-zonal").value;
+  const municipio = document.getElementById("f-municipio").value;
+  const bairro    = document.getElementById("f-bairro").value;
+  const busca     = document.getElementById("f-busca").value.trim().toLowerCase();
 
   const filtradas = DADOS.filter(p=>{
-    if(zona && p.zona!==zona) return false;
     if(vicariato && p.vicariato!==vicariato) return false;
+    if(zonal && p.zonal!==zonal) return false;
+    if(municipio && p.municipio!==municipio) return false;
     if(bairro && p.bairro!==bairro) return false;
-    if(busca && !(p.nome.toLowerCase().includes(busca) || p.bairro.toLowerCase().includes(busca))) return false;
+    if(busca && !(p.nome.toLowerCase().includes(busca) || p.bairro.toLowerCase().includes(busca) || (p.municipio||"").toLowerCase().includes(busca))) return false;
     if((dia||turno) && !paroquiaTemHorarioEm(p, dia, turno)) return false;
     return true;
   });
@@ -766,9 +806,9 @@ function render(){
       <article class="paroquia">
         <div class="paroquia-top">
           <h3>${p.nome}</h3>
-          <span class="bairro-tag">${p.bairro}</span>
+          <span class="bairro-tag">${p.municipio && p.municipio !== "Natal" ? p.municipio : p.bairro}</span>
         </div>
-        ${p.vicariato ? `<div class="vicariato-tag">${p.vicariato}</div>` : ""}
+        ${p.vicariato ? `<div class="vicariato-tag">${p.vicariato}${p.zonal ? " · " + p.zonal : ""}</div>` : ""}
         <div class="horarios">${pills}</div>
         ${p.obs ? `<div class="obs">${p.obs}</div>` : ""}
         ${contatoHtml}
@@ -779,17 +819,39 @@ function render(){
 document.getElementById("f-dia").addEventListener("change", render);
 document.getElementById("f-turno").addEventListener("change", render);
 document.getElementById("f-busca").addEventListener("input", render);
-document.getElementById("f-zona").addEventListener("change", ()=>{ popularBairros(document.getElementById("f-zona").value); render(); });
-document.getElementById("f-vicariato").addEventListener("change", render);
+document.getElementById("f-vicariato").addEventListener("change", ()=>{
+  const vic = document.getElementById("f-vicariato").value;
+  popularZonais(vic);
+  popularMunicipios(vic, "");
+  popularBairros(vic, "", "");
+  render();
+});
+document.getElementById("f-zonal").addEventListener("change", ()=>{
+  const vic = document.getElementById("f-vicariato").value;
+  const zon = document.getElementById("f-zonal").value;
+  popularMunicipios(vic, zon);
+  popularBairros(vic, zon, "");
+  render();
+});
+document.getElementById("f-municipio").addEventListener("change", ()=>{
+  const vic = document.getElementById("f-vicariato").value;
+  const zon = document.getElementById("f-zonal").value;
+  const mun = document.getElementById("f-municipio").value;
+  popularBairros(vic, zon, mun);
+  render();
+});
 document.getElementById("f-bairro").addEventListener("change", render);
 document.getElementById("limpar").addEventListener("click", ()=>{
   document.getElementById("f-dia").value="";
   document.getElementById("f-turno").value="";
-  document.getElementById("f-zona").value="";
   document.getElementById("f-vicariato").value="";
-  popularBairros("");
+  document.getElementById("f-zonal").value="";
+  document.getElementById("f-municipio").value="";
   document.getElementById("f-bairro").value="";
   document.getElementById("f-busca").value="";
+  popularZonais("");
+  popularMunicipios("","");
+  popularBairros("","","");
   render();
 });
 
