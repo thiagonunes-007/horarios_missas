@@ -274,6 +274,21 @@
 
   footer{text-align:center; font-size:12px; color:var(--tinta-leve); padding:24px 20px 50px;}
 
+  /* ===== LOADING OVERLAY ===== */
+  #loading-overlay{
+    display:none; position:fixed; inset:0; z-index:2000;
+    background:rgba(21,52,140,.82); backdrop-filter:blur(4px);
+    flex-direction:column; align-items:center; justify-content:center; gap:18px;
+  }
+  .loading-spinner{
+    width:52px; height:52px; border-radius:50%;
+    border:5px solid rgba(255,255,255,.25);
+    border-top-color:#ffffff;
+    animation:spin .85s linear infinite;
+  }
+  @keyframes spin{ to{transform:rotate(360deg);} }
+  .loading-txt{ color:#fff; font-size:15px; font-weight:500; letter-spacing:.02em; }
+
   /* ===== BOTÃO FLUTUANTE DE E-MAIL ===== */
   .btn-float-email{
     position:fixed; bottom:22px; right:20px; z-index:999;
@@ -433,722 +448,183 @@
   Contato por e-mail
 </a>
 
+<!-- Loading overlay -->
+<div id="loading-overlay">
+  <div class="loading-spinner"></div>
+  <span class="loading-txt">Carregando horários...</span>
+</div>
+
 <script>
 const DIAS = ["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"];
 const DIAS_ABREV = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
 function range(a,b){const r=[];for(let i=a;i<=b;i++)r.push(i);return r;}
 
 // cada item de "horarios": {dias:[0-6], hora:"HH:MM"}
-const DADOS = [
-{nome:"Paróquia da Catedral", bairro:"Tirol", zona:"Centro/Leste",
- horarios:[...range(1,5).flatMap(d=>[{dias:[d],hora:"11:00"},{dias:[d],hora:"16:30"}]),
-   {dias:[6],hora:"11:00"},{dias:[6],hora:"16:30"},
-   {dias:[0],hora:"07:00"},{dias:[0],hora:"11:00"},{dias:[0],hora:"19:00"}]},
+// ===================================================
+// DADOS CARREGADOS DO GOOGLE SHEETS
+// Para atualizar: edite a planilha e salve. O app
+// recarrega os dados a cada vez que é aberto.
+// ===================================================
+const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQG8yQeC8Zk1ZykvB3q4GJ5W8fAnRXy6AGpOBGjap6orL27FFFDxb8RPQH4OJ5AxQ/pub?gid=1918572236&single=true&output=csv";
+
+let DADOS = [];
+let CONTATOS = {};
+let VICARIATOS = {};
+
+// ----- parser de horários (texto → estrutura) -----
+const DIAS_MAP_PT = {Dom:0,Seg:1,Ter:2,"Ter\u00e7a":2,Qua:3,Qui:4,Sex:5,"S\u00e1b":6,Sab:6};
+function parseHorarios(txt) {
+  if (!txt || !txt.trim()) return [];
+  const result = [];
+  const segments = txt.split("|").map(s => s.trim()).filter(Boolean);
+  for (const seg of segments) {
+    const col = seg.indexOf(":");
+    if (col === -1) continue;
+    const daysPart = seg.slice(0, col).trim();
+    const timesPart = seg.slice(col + 1).trim();
+    const horas = timesPart.split("/").map(t => t.trim()).filter(t => /\d{1,2}:\d{2}/.test(t));
+    const dias = [];
+    for (const grp of daysPart.split(",").map(d => d.trim())) {
+      if (grp.includes("-")) {
+        const pts = grp.split("-").map(d => d.trim());
+        const s = DIAS_MAP_PT[pts[0]], e = DIAS_MAP_PT[pts[1]];
+        if (s !== undefined && e !== undefined)
+          for (let i = s; i <= e; i++) dias.push(i);
+      } else {
+        const d = DIAS_MAP_PT[grp];
+        if (d !== undefined && !dias.includes(d)) dias.push(d);
+      }
+    }
+    for (const hora of horas) result.push({ dias: [...dias], hora });
+  }
+  return result;
+}
+
+// ----- parser de CSV (lida com aspas e vírgulas) -----
+function parseCSV(text) {
+  const rows = [];
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const cols = [];
+    let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"' && line[i+1] === '"') { cur += '"'; i++; }
+      else if (c === '"') { inQ = !inQ; }
+      else if (c === ',' && !inQ) { cols.push(cur); cur = ""; }
+      else cur += c;
+    }
+    cols.push(cur);
+    rows.push(cols);
+  }
+  return rows;
+}
+
+// ----- loading overlay -----
+function mostrarLoading() {
+  document.getElementById("loading-overlay").style.display = "flex";
+}
+function esconderLoading() {
+  document.getElementById("loading-overlay").style.display = "none";
+}
+function mostrarErro(msg) {
+  const lista = document.getElementById("lista");
+  if (lista) lista.innerHTML = `
+    <div class="vazio">
+      <strong>⚠️ Erro ao carregar dados</strong>
+      ${msg}
+      <button onclick="inicializar()" style="margin-top:14px;display:inline-flex;align-items:center;gap:8px;background:#15348c;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">
+        🔄 Tentar novamente
+      </button>
+    </div>`;
+  esconderLoading();
+}
+
+// ----- inicialização -----
+async function inicializar() {
+  mostrarLoading();
+
+  // Google Sheets bloqueia CORS direto; tentamos via proxy e depois direto como fallback
+  const CSV_DIRETO = SHEET_CSV_URL;
+  const CSV_PROXY  = "https://api.allorigins.win/raw?url=" + encodeURIComponent(SHEET_CSV_URL);
+
+  let text = null;
+  for (const url of [CSV_PROXY, CSV_DIRETO]) {
+    try {
+      const resp = await fetch(url, { cache: "no-cache" });
+      if (!resp.ok) continue;
+      text = await resp.text();
+      if (text && text.length > 100) break;
+    } catch(e) { /* tenta próximo */ }
+  }
+
+  if (!text || text.length < 100) {
+    mostrarErro("Não foi possível carregar os dados da planilha. Verifique sua conexão e recarregue a página.");
+    return;
+  }
+
+  try {
+    const rows = parseCSV(text);
+
+    // Pular linhas de cabeçalho: encontrar a linha de títulos das colunas e começar na próxima
+    // A linha de cabeçalho tem "Paróquia" na col A e "Bairro" na col B
+    let dataStart = 4; // fallback: pula título + subtítulo + vazia + cabeçalho
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const col0 = (r[0] || "").trim().toLowerCase();
+      const col1 = (r[1] || "").trim().toLowerCase();
+      if (col0.includes("par") && col1.includes("bairro")) {
+        dataStart = i + 1; // linha seguinte ao cabeçalho é o primeiro dado
+        break;
+      }
+    }
+    console.log("📊 CSV: total de linhas =", rows.length, "| dados a partir da linha", dataStart);
+    console.log("📋 Linhas 0-5 do CSV:", rows.slice(0, 6).map((r,i)=>`[${i}] col0="${r[0]}" col1="${r[1]}"`));
+    console.log("📌 Primeira linha de dados:", rows[dataStart]);
+
+    DADOS = [];
+    CONTATOS = {};
+    VICARIATOS = {};
+
+    for (let i = dataStart; i < rows.length; i++) {
+      const r = rows[i];
+      const nome     = (r[0] || "").trim();
+      const bairro   = (r[1] || "").trim();
+      const zona     = (r[2] || "").trim();
+      const vicar    = (r[3] || "").trim();
+      const horTxt   = (r[4] || "").trim();
+      const obs      = (r[5] || "").trim();
+      const endereco = (r[6] || "").trim();
+      const telefone = (r[7] || "").trim();
+      const email    = (r[8] || "").trim();
+
+      if (!nome) continue;
+
+      const horarios = parseHorarios(horTxt);
+      if (i < dataStart + 3) console.log(`🏛️ [${i}] nome="${nome}" | horTxt="${horTxt}" | horarios parseados:`, horarios);
+
+      const key = nome + "|" + bairro;
+      DADOS.push({ nome, bairro, zona, vicariato: vicar || null, horarios, obs });
+      if (endereco || telefone || email)
+        CONTATOS[key] = { endereco, telefone, email };
+      if (vicar) VICARIATOS[key] = vicar;
+    }
+
+    console.log("✅ DADOS carregados:", DADOS.length, "paróquias");
+    console.log("Exemplo DADOS[0]:", DADOS[0]);
+
+    popularFiltros();
+    montarAgora();
+    render();
+    esconderLoading();
+
+  } catch (err) {
+    console.error(err);
+    mostrarErro("Não foi possível conectar à planilha. Verifique sua conexão e recarregue a página.<br><small>" + err.message + "</small>");
+  }
+}
 
-{nome:"Paróquia da Sagrada Família", bairro:"Rocas", zona:"Centro/Leste",
- horarios:[{dias:[3,4,5],hora:"17:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Apresentação", bairro:"Cidade Alta", zona:"Centro/Leste",
- horarios:[{dias:range(2,6),hora:"16:30"},{dias:[0],hora:"07:00"},{dias:[0],hora:"16:30"}]},
-
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"Mãe Luiza", zona:"Centro/Leste",
- horarios:[{dias:[2,3,4,5],hora:"17:00"},{dias:[6],hora:"19:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Santa Teresinha", bairro:"Tirol", zona:"Centro/Leste",
- horarios:[{dias:range(1,5),hora:"17:30"},{dias:[0],hora:"08:00"},{dias:[0],hora:"11:00"},{dias:[0],hora:"17:00"},{dias:[0],hora:"19:30"}],
- obs:"Último domingo do mês, 9h30 — Missa das crianças."},
-
-{nome:"Paróquia de Nossa Senhora de Lourdes", bairro:"Areia Preta", zona:"Centro/Leste",
- horarios:[{dias:range(2,6),hora:"17:30"},{dias:[0],hora:"09:00"},{dias:[0],hora:"18:00"}]},
-
-{nome:"Paróquia de São João Batista", bairro:"Lagoa Seca", zona:"Centro/Leste",
- horarios:[{dias:[2,3,4,5],hora:"17:30"},{dias:[6],hora:"17:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"18:00"}]},
-
-{nome:"Paróquia de São Pedro Apóstolo", bairro:"Alecrim", zona:"Centro/Leste",
- horarios:[...range(1,6).flatMap(d=>[{dias:[d],hora:"06:30"},{dias:[d],hora:"18:00"}]),
-   {dias:[0],hora:"06:30"},{dias:[0],hora:"10:30"},{dias:[0],hora:"17:00"}],
- obs:"Segunda-feira, 18h — Missa por pedido de cura e libertação."},
-
-{nome:"Paróquia do Bom Jesus das Dores", bairro:"Ribeira", zona:"Centro/Leste",
- horarios:[{dias:range(1,6),hora:"17:00"},{dias:[0],hora:"08:00"},{dias:[0],hora:"11:00"},{dias:[0],hora:"17:00"}],
- obs:"1º sábado do mês, 8h."},
-
-{nome:"Paróquia de Nossa Senhora Aparecida", bairro:"Neópolis", zona:"Sul",
- horarios:[{dias:[2,3,4,5],hora:"17:30"},{dias:[6],hora:"19:00"},{dias:[0],hora:"07:30"},{dias:[0],hora:"11:00"},{dias:[0],hora:"19:00"}],
- obs:"Dia 20, 19h — missa com oração por cura. Dia 29, 19h — em honra a São Miguel Arcanjo."},
-
-{nome:"Paróquia de Nossa Senhora da Candelária", bairro:"Candelária", zona:"Sul",
- horarios:[{dias:[2,3,4,5],hora:"17:00"},{dias:[6],hora:"18:00"},{dias:[0],hora:"08:00"},{dias:[0],hora:"11:00"},{dias:[0],hora:"18:00"}],
- obs:"Todo dia 2, às 12h."},
-
-{nome:"Paróquia de Sant'Ana", bairro:"Capim Macio", zona:"Sul",
- horarios:[{dias:[2,3,4],hora:"19:00"},{dias:[5,6],hora:"17:00"},{dias:[0],hora:"10:00"},{dias:[0],hora:"17:00"}],
- obs:"Todo dia 26, 19h — Missa do ramalhete de Sant'Ana."},
-
-{nome:"Paróquia de Santa Rita de Cássia", bairro:"Ponta Negra", zona:"Sul",
- horarios:[{dias:range(1,5),hora:"18:00"},{dias:[6],hora:"17:00"},{dias:[0],hora:"08:00"},{dias:[0],hora:"11:00"},{dias:[0],hora:"18:00"}]},
-
-{nome:"Paróquia de Santo Afonso Maria de Ligório", bairro:"Mirassol", zona:"Sul",
- horarios:[{dias:range(1,5),hora:"19:00"},{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de São Camilo de Léllis", bairro:"Lagoa Nova", zona:"Sul",
- horarios:[{dias:[6],hora:"17:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"11:00"},{dias:[0],hora:"19:00"},{dias:[2,3,4,5],hora:"18:00"}]},
-
-{nome:"Paróquia de São João Batista", bairro:"Vila de Ponta Negra", zona:"Sul",
- horarios:[{dias:range(2,6),hora:"19:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia do Sagrado Coração de Jesus", bairro:"Morro Branco", zona:"Sul",
- horarios:[{dias:[2],hora:"19:00"},{dias:[3],hora:"12:00"},{dias:[4],hora:"19:00"},{dias:[6],hora:"17:00"},
-   {dias:[0],hora:"07:00"},{dias:[0],hora:"10:30"},{dias:[0],hora:"17:00"},{dias:[0],hora:"19:00"}],
- obs:"Terça com novena. Quinta com adoração. 1ª sexta-feira do mês, 17h."},
-
-{nome:"Paróquia de Nossa Senhora Rainha da Paz", bairro:"Nova Parnamirim", zona:"Parnamirim",
- horarios:[{dias:[6,0],hora:"08:00"},{dias:[6,0],hora:"17:00"},{dias:[2,4],hora:"19:00"}],
- obs:"1ª sexta-feira do mês, 19h."},
-
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"Nova Parnamirim", zona:"Parnamirim",
- horarios:[{dias:range(1,5),hora:"06:00"},{dias:[6],hora:"17:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora de Fátima", bairro:"Parnamirim", zona:"Parnamirim",
- horarios:[{dias:range(2,6),hora:"18:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"18:00"}],
- obs:"Dia 13, 12h — missa votiva a Nossa Senhora de Fátima."},
-
-{nome:"Paróquia de Nossa Senhora do Carmo", bairro:"Parque das Nações", zona:"Parnamirim",
- horarios:[{dias:[2,3,4,5],hora:"17:00"},{dias:[6],hora:"19:30"},{dias:[0],hora:"07:00"},{dias:[0],hora:"09:00"},{dias:[0],hora:"18:00"}]},
-
-{nome:"Paróquia de São Francisco de Assis e São João Lostau", bairro:"Lostau", zona:"Parnamirim",
- horarios:[{dias:[2,3],hora:"19:00"},{dias:[0],hora:"19:30"}]},
-
-{nome:"Paróquia de São Mateus Moreira", bairro:"Cidade Verde", zona:"Parnamirim",
- horarios:[{dias:range(2,6),hora:"19:00"},{dias:[0],hora:"08:00"},{dias:[0],hora:"16:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora Virgem dos Pobres", bairro:"Emaús, Parnamirim", zona:"Parnamirim",
- horarios:[{dias:[4,5,6],hora:"17:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"10:00"},{dias:[0],hora:"17:00"}],
- obs:"Domingo, 10h — missa das crianças."},
-
-{nome:"Paróquia de Santo André de Soveral", bairro:"Emaús, Parnamirim", zona:"Parnamirim",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"},{dias:[4],hora:"19:00"}],
- obs:"Dia 03, 19h — votiva aos Santos Mártires. Dia 29, 19h — cura/libertação a São Miguel. 1ª sexta-feira, 19h."},
-
-{nome:"Paróquia de Santos Reis", bairro:"Parnamirim", zona:"Parnamirim",
- horarios:[{dias:[0],hora:"07:30"},{dias:[0],hora:"19:00"}],
- obs:"Quinta-feira (1ª e 3ª do mês), 19h."},
-
-{nome:"Paróquia de São Miguel Arcanjo", bairro:"Rosa dos Ventos, Parnamirim", zona:"Parnamirim",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"},{dias:[4],hora:"19:00"}],
- obs:"1ª sexta-feira do mês, 18h."},
-
-{nome:"Paróquia de Nossa Senhora Auxiliadora", bairro:"Felipe Camarão", zona:"Oeste/Norte",
- horarios:[{dias:[2,4,5],hora:"19:00"},{dias:[0],hora:"09:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Assunção", bairro:"Guarapes", zona:"Oeste/Norte",
- horarios:[{dias:[2,3,5],hora:"19:00"},{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia Santuário de Nossa Senhora da Esperança e Santo Inácio de Loyola", bairro:"Cidade da Esperança", zona:"Centro/Leste",
- horarios:[{dias:range(2,6),hora:"19:00"},{dias:[0],hora:"08:30"},{dias:[0],hora:"11:00"},{dias:[0],hora:"17:00"}]},
-
-{nome:"Paróquia Santuário dos Santos Mártires de Cunhaú e Uruaçu", bairro:"Nazaré", zona:"Centro/Leste",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"10:00"},{dias:[0],hora:"17:00"},{dias:[2,3,4,5],hora:"19:00"}],
- obs:"1ª quinta-feira do mês, 19h — cura e libertação. Dia 3, 19h — votiva aos Santos Mártires."},
-
-{nome:"Paróquia de Jesus Bom Pastor", bairro:"Bom Pastor", zona:"Centro/Leste",
- horarios:[{dias:[2,3,4,5],hora:"19:00"},{dias:[6],hora:"19:30"},{dias:[0],hora:"07:30"},{dias:[0],hora:"16:00"},{dias:[0],hora:"19:30"}]},
-
-{nome:"Paróquia de Nossa Senhora do Perpétuo Socorro", bairro:"Quintas", zona:"Centro/Leste",
- horarios:[{dias:[4,5],hora:"18:00"},{dias:[6],hora:"18:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de São José", bairro:"Cidade Nova", zona:"Centro/Leste",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:30"},{dias:[4,5],hora:"19:00"},{dias:[6],hora:"19:30"}]},
-
-{nome:"Paróquia de São José de Anchieta", bairro:"Lagoa Nova", zona:"Sul",
- horarios:[{dias:range(1,5),hora:"07:30"},{dias:[6],hora:"08:30"},{dias:[6],hora:"17:00"},
-   {dias:[0],hora:"09:00"},{dias:[0],hora:"11:00"},{dias:[0],hora:"12:30"},{dias:[0],hora:"18:00"},{dias:[0],hora:"19:30"}],
- obs:"Quintas-feiras, 18h — adoração ao Santíssimo Sacramento."},
-
-{nome:"Paróquia de São Sebastião", bairro:"Alecrim", zona:"Centro/Leste",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"16:30"},{dias:[0],hora:"19:30"},{dias:range(2,6),hora:"19:00"}]},
-
-{nome:"Paróquia de Cristo Rei", bairro:"Pirangi", zona:"Sul",
- horarios:[{dias:range(2,6),hora:"17:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"11:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora dos Impossíveis", bairro:"Pitimbu", zona:"Sul",
- horarios:[{dias:[0],hora:"11:00"},{dias:[0],hora:"18:00"},{dias:[3,4,5],hora:"19:00"},{dias:[6],hora:"17:00"}],
- obs:"Última quarta-feira do mês, 19h — missa com oração de cura."},
-
-{nome:"Paróquia de Santa Clara", bairro:"Pitimbu", zona:"Sul",
- horarios:[{dias:[2,3,4,5],hora:"06:30"},{dias:[0],hora:"08:00"},{dias:[0],hora:"17:30"}]},
-
-{nome:"Paróquia de Santo Ambrósio Francisco Ferro", bairro:"Planalto", zona:"Sul",
- horarios:[{dias:[2,4,5,6],hora:"19:00"},{dias:[0],hora:"09:00"},{dias:[0],hora:"17:00"}]},
-
-{nome:"Paróquia de São Francisco de Assis", bairro:"Cidade Satélite", zona:"Sul",
- horarios:[{dias:[2,3,4,5],hora:"17:30"},{dias:[6],hora:"16:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"18:00"}]},
-
-{nome:"Paróquia da Imaculada Conceição", bairro:"Conjunto Nova Aliança", zona:"Oeste/Norte",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"},{dias:[2,4,5],hora:"17:30"}],
- obs:"1ª sexta-feira, 17h30 — votiva ao Sagrado Coração. 4º sábado, 9h — missa das crianças."},
-
-{nome:"Paróquia de Sant'Ana", bairro:"Soledade 2", zona:"Oeste/Norte",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"17:00"},{dias:[0],hora:"19:00"},{dias:[2,3,4,5],hora:"17:00"},{dias:[6],hora:"17:00"}]},
-
-{nome:"Paróquia de Santa Luzia", bairro:"Boa Esperança", zona:"Oeste/Norte",
- horarios:[{dias:[2,3,4,5],hora:"18:00"},{dias:[6],hora:"07:00"},{dias:[0],hora:"11:00"},{dias:[0],hora:"19:00"}],
- obs:"Dias 13 e 18, 19h."},
-
-{nome:"Paróquia de Santa Maria Mãe", bairro:"Conjunto Santa Catarina", zona:"Oeste/Norte",
- horarios:[{dias:[3,5],hora:"19:00"},{dias:[0],hora:"07:30"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Santo Antônio de Pádua", bairro:"Parque dos Coqueiros", zona:"Oeste/Norte",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"},{dias:[2,3,4,5],hora:"18:00"},{dias:[6],hora:"07:00"}]},
-
-{nome:"Paróquia de São Tomé Apóstolo", bairro:"Cidade do Sol", zona:"Oeste/Norte",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"Macaíba", zona:"Macaíba",
- horarios:[{dias:[0],hora:"07:30"},{dias:[0],hora:"19:00"},{dias:[2],hora:"19:00"},{dias:[3,4,5],hora:"07:00"}],
- obs:"1ª sexta-feira do mês, 19h."},
-
-{nome:"Paróquia de Nossa Senhora de Fátima", bairro:"Macaíba", zona:"Macaíba",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Santo Antônio", bairro:"Santo Antônio do Potengi", zona:"Macaíba",
- horarios:[{dias:[0],hora:"09:00"},{dias:[0],hora:"19:00"}],
- obs:"Dia 29, 19h30 — votiva a São Miguel Arcanjo."},
-
-{nome:"Paróquia de Santo Expedito", bairro:"Jardim Petrópolis", zona:"Macaíba",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de São Gonçalo", bairro:"São Gonçalo do Amarante", zona:"São Gonçalo do Amarante",
- horarios:[{dias:[0],hora:"07:30"},{dias:[0],hora:"19:30"},{dias:[4],hora:"19:30"}],
- obs:"1ª sexta-feira, 6h30."},
-
-{nome:"Paróquia de São Lucas", bairro:"Conjunto Amarante", zona:"São Gonçalo do Amarante",
- horarios:[{dias:[3,4,5,6],hora:"18:00"},{dias:[0],hora:"09:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia Santuário de Nossa Senhora de Fátima", bairro:"Parque das Dunas", zona:"São Gonçalo do Amarante",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"10:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora dos Navegantes", bairro:"Redinha", zona:"Oeste/Norte",
- horarios:[{dias:[0],hora:"08:00"}]},
-
-{nome:"Paróquia de São João Batista", bairro:"Pitangui", zona:"São Gonçalo do Amarante",
- horarios:[{dias:[0],hora:"07:30"},{dias:[0],hora:"19:00"}],
- obs:"1ª sexta-feira, 19h. Última quarta-feira, 19h — missa das famílias."},
-
-{nome:"Paróquia de São João Bosco", bairro:"Gramoré", zona:"Oeste/Norte",
- horarios:[{dias:[2,3,4,5],hora:"06:00"},{dias:[2,3,4,5],hora:"19:00"},{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de São Miguel Arcanjo", bairro:"Extremoz", zona:"Extremoz",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"18:30"},{dias:[2,3,4,5],hora:"18:00"}]},
-
-{nome:"Paróquia de São Tiago Menor", bairro:"Santarém", zona:"São Gonçalo do Amarante",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"11:00"},{dias:[0],hora:"19:00"},{dias:[2,3,4,5],hora:"19:00"}],
- obs:"1ª sexta-feira do mês, 19h — Sagrado Coração. Último sábado, 9h — missa das crianças. Dia 03, 19h — missa da saúde."},
-
-// ===== INTERIOR DO RN =====
-
-// --- Vale do Açu ---
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"São Rafael", zona:"Vale do Açu",
- horarios:[{dias:[3,4,5],hora:"17:00"},{dias:[6],hora:"07:30"},{dias:[0],hora:"08:00"},{dias:[0],hora:"19:30"}]},
-
-{nome:"Paróquia de Nossa Senhora das Graças", bairro:"Afonso Bezerra", zona:"Vale do Açu",
- horarios:[{dias:[0],hora:"07:30"},{dias:[0],hora:"19:30"},{dias:[4],hora:"19:00"}],
- obs:"1ª sexta-feira do mês, 19h."},
-
-{nome:"Paróquia de Sant'Ana", bairro:"Santana do Matos", zona:"Vale do Açu",
- horarios:[{dias:[0],hora:"19:30"}],
- obs:"1ª sexta-feira, 17h — votiva ao Sagrado Coração. Dia 18, 17h — renovação da aliança com a Mãe Rainha. 3ª sexta-feira, 17h — mãos ensanguentadas de Jesus."},
-
-{nome:"Paróquia de São José", bairro:"Angicos", zona:"Vale do Açu",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:30"},{dias:[6],hora:"10:00"},{dias:[2,3,4,5],hora:"17:00"}]},
-
-{nome:"Paróquia de São Paulo Apóstolo", bairro:"Pedro Avelino", zona:"Vale do Açu",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:30"},{dias:[3,4,5],hora:"17:30"}]},
-
-{nome:"Paróquia de São Vicente Férrer", bairro:"Itajá", zona:"Vale do Açu",
- horarios:[{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"Lajes", zona:"Vale do Açu",
- horarios:[{dias:range(1,5),hora:"18:30"},{dias:[6],hora:"07:30"},{dias:[0],hora:"07:30"},{dias:[0],hora:"19:30"}]},
-
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"Guamaré", zona:"Vale do Açu",
- horarios:[{dias:[0],hora:"07:30"},{dias:[0],hora:"19:30"},{dias:[5],hora:"19:30"}]},
-
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"Macau", zona:"Vale do Açu",
- horarios:[{dias:[2,3,4,5],hora:"17:30"},{dias:[0],hora:"07:00"},{dias:[0],hora:"19:30"}]},
-
-{nome:"Paróquia de Nossa Senhora de Lourdes", bairro:"Ipanguaçu", zona:"Vale do Açu",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"18:00"}]},
-
-{nome:"Paróquia de Nossa Senhora do Rosário", bairro:"Alto do Rodrigues", zona:"Vale do Açu",
- horarios:[{dias:range(2,6),hora:"19:00"},{dias:[0],hora:"10:00"},{dias:[0],hora:"19:30"}]},
-
-{nome:"Paróquia de São João Batista", bairro:"Pendências", zona:"Vale do Açu",
- horarios:[{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de São José Operário", bairro:"Jandaíra", zona:"Vale do Açu",
- horarios:[{dias:[0],hora:"19:30"},{dias:[4],hora:"19:30"}]},
-
-// --- Litoral Norte ---
-{nome:"Paróquia de Nossa Senhora de Nazaré", bairro:"Parazinho", zona:"Litoral Norte",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:30"},{dias:[4],hora:"19:30"}]},
-
-{nome:"Paróquia de Nossa Senhora Mãe dos Homens", bairro:"João Câmara", zona:"Litoral Norte",
- horarios:[{dias:[2,3,4,5],hora:"17:30"},{dias:[6],hora:"10:00"}],
- obs:"Sábado, 10h — missa dos feirantes. 1ª sexta-feira do mês, 7h. 3ª quinta-feira do mês, 19h."},
-
-{nome:"Paróquia de Nossa Senhora do Livramento", bairro:"Taipu", zona:"Litoral Norte",
- horarios:[{dias:[3,4,5],hora:"19:30"}],
- obs:"Último domingo do mês, 19h — missa devocional a Nossa Senhora do Livramento."},
-
-{nome:"Paróquia do Sagrado Coração de Jesus", bairro:"Poço Branco", zona:"Litoral Norte",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"},{dias:[2,3,4],hora:"19:00"}],
- obs:"1ª sexta-feira do mês, 19h. 2ª terça-feira do mês, 19h — missa de São Brás com benção da garganta."},
-
-{nome:"Paróquia de Santo Antão Abade", bairro:"São Bento do Norte", zona:"Litoral Norte",
- horarios:[{dias:[0],hora:"19:30"},{dias:[5],hora:"07:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"Ceará-Mirim", zona:"Litoral Norte",
- horarios:[{dias:range(2,6),hora:"06:00"},{dias:[0],hora:"06:30"},{dias:[0],hora:"10:00"},{dias:[0],hora:"16:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"Maxaranguape", zona:"Litoral Norte",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"Santa Maria", zona:"Litoral Norte",
- horarios:[{dias:[4,0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Pureza", bairro:"Pureza", zona:"Litoral Norte",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"18:00"},{dias:[4],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora das Dores", bairro:"Ceará-Mirim", zona:"Litoral Norte",
- horarios:[{dias:[0],hora:"19:00"},{dias:[4],hora:"06:30"}],
- obs:"1ª sexta-feira do mês, 19h. Dia 15, 19h — missa do devoto da Virgem Dolorosa."},
-
-{nome:"Paróquia de Nossa Senhora do Rosário de Fátima", bairro:"Ceará-Mirim", zona:"Litoral Norte",
- horarios:[{dias:[0],hora:"19:00"}],
- obs:"Dia 04, 19h — bênção de São Brás. Dia 13, 19h — votiva a Nossa Senhora do Rosário de Fátima. Dia 22, 19h — Coroa de Santa Rita de Cássia. 1ª quinta-feira, 19h — votiva a São Miguel Arcanjo."},
-
-{nome:"Paróquia do Bom Jesus dos Navegantes", bairro:"Touros", zona:"Litoral Norte",
- horarios:[{dias:[2,3,4,5],hora:"07:00"},{dias:[0],hora:"10:00"},{dias:[0],hora:"19:30"}]},
-
-{nome:"Área Pastoral de Nossa Senhora dos Navegantes", bairro:"Rio do Fogo", zona:"Litoral Norte",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"18:00"}]},
-
-{nome:"Paróquia de São Miguel Arcanjo", bairro:"São Miguel do Gostoso", zona:"Litoral Norte",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"},{dias:[6],hora:"19:00"}]},
-
-{nome:"Paróquia de Santa Luzia", bairro:"Touros", zona:"Litoral Norte",
- horarios:[{dias:[0],hora:"19:00"},{dias:[4],hora:"19:00"}]},
-
-// --- Litoral Sul ---
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"Canguaretama", zona:"Litoral Sul",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Piedade", bairro:"Espírito Santo", zona:"Litoral Sul",
- horarios:[{dias:[0],hora:"07:30"},{dias:[0],hora:"19:00"},{dias:[3],hora:"16:00"},{dias:[4],hora:"19:00"},{dias:[5],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora dos Prazeres", bairro:"Goianinha", zona:"Litoral Sul",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"}],
- obs:"Toda 1ª sexta-feira do mês, 8h."},
-
-{nome:"Paróquia de Santo Antônio de Lisboa", bairro:"Tibau do Sul", zona:"Litoral Sul",
- horarios:[{dias:[3],hora:"19:30"},{dias:[0],hora:"19:30"}],
- obs:"Quarta-feira, 19h30 — missa do pão de Santo Antônio."},
-
-{nome:"Paróquia de São Francisco de Assis", bairro:"Pedro Velho", zona:"Litoral Sul",
- horarios:[{dias:[0],hora:"07:30"},{dias:[0],hora:"19:00"},{dias:[2],hora:"18:30"},{dias:[4],hora:"18:30"},{dias:[6],hora:"07:00"}],
- obs:"Sábado, 7h — missa votiva à Virgem Aparecida. 1ª sexta-feira, 19h — missa com oração de cura."},
-
-{nome:"Paróquia de São Pedro Pescador", bairro:"Baía Formosa", zona:"Litoral Sul",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"},{dias:[1,3,5],hora:"19:00"}]},
-
-{nome:"Paróquia do Divino Espírito Santo", bairro:"Vera Cruz", zona:"Litoral Sul",
- horarios:[{dias:[2,3,4,5],hora:"06:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Penha", bairro:"Monte Alegre", zona:"Litoral Sul",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"},{dias:[4],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora das Dores", bairro:"Brejinho", zona:"Litoral Sul",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:30"}]},
-
-{nome:"Paróquia de Nossa Senhora do Ó", bairro:"Nísia Floresta", zona:"Litoral Sul",
- horarios:[{dias:[4],hora:"19:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Sant'Ana e São Joaquim", bairro:"São José de Mipibu", zona:"Litoral Sul",
- horarios:[{dias:[2,3,5,6],hora:"07:00"},{dias:[4],hora:"19:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"10:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Área Pastoral do Sagrado Coração de Jesus", bairro:"São José de Mipibu", zona:"Litoral Sul",
- horarios:[{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de São João Batista", bairro:"Arez", zona:"Litoral Sul",
- horarios:[], obs:"Horário de missa não divulgado pela paróquia."},
-
-// --- Trairi e Potengi ---
-{nome:"Paróquia de Nossa Senhora de Lourdes", bairro:"Campo Redondo", zona:"Trairi e Potengi",
- horarios:[{dias:[2],hora:"19:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora do Amparo", bairro:"Coronel Ezequiel", zona:"Trairi e Potengi",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"}],
- obs:"1ª sexta-feira do mês, 19h. Todo dia 29, 19h."},
-
-{nome:"Paróquia de Santa Rita de Cássia", bairro:"Santa Cruz", zona:"Trairi e Potengi",
- horarios:[{dias:[2,3,4,5],hora:"18:00"},{dias:[6],hora:"10:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Santa Teresinha", bairro:"Tangará", zona:"Trairi e Potengi",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"},{dias:[3],hora:"19:00"}],
- obs:"Quarta-feira, 19h — missa para os homens."},
-
-{nome:"Paróquia de São Sebastião", bairro:"Japi", zona:"Trairi e Potengi",
- horarios:[{dias:[0],hora:"19:00"},{dias:[4],hora:"19:00"}]},
-
-{nome:"Área Pastoral de São Sebastião", bairro:"Sítio Novo", zona:"Trairi e Potengi",
- horarios:[{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"São Tomé", zona:"Trairi e Potengi",
- horarios:[{dias:[4],hora:"18:00"},{dias:[6],hora:"08:30"},{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"Serra Caiada", zona:"Trairi e Potengi",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:30"},{dias:[4],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora do Perpétuo Socorro", bairro:"Barcelona", zona:"Trairi e Potengi",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia do Sagrado Coração de Jesus", bairro:"Bom Jesus", zona:"Trairi e Potengi",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"18:30"}]},
-
-{nome:"Paróquia de São Paulo Apóstolo", bairro:"São Paulo do Potengi", zona:"Trairi e Potengi",
- horarios:[{dias:[6],hora:"19:00"},{dias:[0],hora:"08:00"},{dias:[0],hora:"17:30"}]},
-
-{nome:"Paróquia do Sagrado Coração de Jesus", bairro:"Riachuelo", zona:"Trairi e Potengi",
- horarios:[], obs:"Horário de missa não divulgado pela paróquia."},
-
-{nome:"Paróquia de São Pedro Apóstolo", bairro:"São Pedro", zona:"Trairi e Potengi",
- horarios:[{dias:[4,5],hora:"19:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-// --- Agreste ---
-{nome:"Paróquia da Imaculada Conceição", bairro:"Nova Cruz", zona:"Agreste",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"18:00"}]},
-
-{nome:"Paróquia de Nossa Senhora de Fátima", bairro:"Passa e Fica", zona:"Agreste",
- horarios:[{dias:[2,3,4,5],hora:"19:00"},{dias:[0],hora:"08:00"},{dias:[0],hora:"19:30"}]},
-
-{nome:"Paróquia de Santa Teresinha", bairro:"Lagoa D'Anta", zona:"Agreste",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"},{dias:[3],hora:"19:00"}]},
-
-{nome:"Paróquia de São Bento Abade", bairro:"Serra de São Bento", zona:"Agreste",
- horarios:[{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de São João Batista", bairro:"Montanhas", zona:"Agreste",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"},{dias:[3,4,5],hora:"19:00"}],
- obs:"1ª sexta-feira do mês, 8h — missa do Sagrado Coração de Jesus."},
-
-{nome:"Paróquia de São José", bairro:"São José de Campestre", zona:"Agreste",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"},{dias:[5],hora:"09:00"},{dias:[6],hora:"06:30"}],
- obs:"Sexta-feira, 9h — missa dos agricultores e feirantes. 1ª sexta-feira, 17h — dedicada ao Sagrado Coração de Jesus. Todo dia 19, 19h — votiva a São José."},
-
-{nome:"Paróquia de Nossa Senhora da Saúde", bairro:"Boa Saúde", zona:"Agreste",
- horarios:[{dias:[0],hora:"08:00"},{dias:[0],hora:"19:00"},{dias:[4],hora:"19:00"}]},
-
-{nome:"Paróquia da Imaculada Conceição", bairro:"Lagoa Salgada", zona:"Agreste",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-
-{nome:"Paróquia de Nossa Senhora da Conceição", bairro:"Santo Antônio", zona:"Agreste",
- horarios:[{dias:[0],hora:"07:00"},{dias:[0],hora:"17:00"},{dias:[0],hora:"19:00"},{dias:[4],hora:"19:00"}]},
-
-{nome:"Paróquia de São Pedro Apóstolo", bairro:"Várzea", zona:"Agreste",
- horarios:[{dias:[0],hora:"19:30"},{dias:[3,4,5],hora:"19:00"}]},
-
-{nome:"Paróquia de São Francisco de Assis", bairro:"Lagoa de Pedras", zona:"Agreste",
- horarios:[{dias:[0],hora:"07:30"},{dias:[0],hora:"19:30"},{dias:[4],hora:"19:30"}]},
-
-{nome:"Paróquia de Santo Antônio", bairro:"Serrinha", zona:"Agreste",
- horarios:[{dias:[4],hora:"19:00"},{dias:[0],hora:"07:00"},{dias:[0],hora:"19:00"}]},
-];
-
-// ===== contatos (endereço, telefone, e-mail) =====
-// chave: "Nome da paróquia|Bairro" exatamente como em DADOS
-const CONTATOS = {
-"Paróquia da Catedral|Tirol": {endereco:"Av. Floriano Peixoto, 674, Tirol, 59020-500, Natal - RN", telefone:"(84) 3201-4559"},
-"Paróquia da Sagrada Família|Rocas": {endereco:"Praça Sagrada Família, s/n, Rocas, 59010-670, Natal - RN", telefone:"(84) 3615-2812"},
-"Paróquia de Nossa Senhora da Apresentação|Cidade Alta": {endereco:"Praça André de Albuquerque, s/n, Cidade Alta, 59025-580, Natal - RN", telefone:"(84) 3615-2808"},
-"Paróquia de Nossa Senhora da Conceição|Mãe Luiza": {endereco:"Alameda Padre Sabino Gentili, 686, Mãe Luíza, 59014-425, Natal - RN", telefone:"(84) 99843-1594", email:"paroquia.nsconceicao23@gmail.com"},
-"Paróquia de Santa Teresinha|Tirol": {endereco:"Av. Rodrigues Alves, 793, Tirol, 59020-200, Natal - RN", telefone:"(84) 3615-2809 / 3615-2810"},
-"Paróquia de Nossa Senhora de Lourdes|Areia Preta": {endereco:"Tv. Aprígio Alves, 738, Areia Preta, 59014-050, Natal - RN", telefone:"(84) 99631-0213", email:"pnslourdes.natal@gmail.com"},
-"Paróquia de São João Batista|Lagoa Seca": {endereco:"Rua São João, 1363, Lagoa Seca, 59022-390, Natal - RN", telefone:"(84) 3615-2871 / 99927-4343", email:"paroquiasjbatista@yahoo.com.br"},
-"Paróquia de São Pedro Apóstolo|Alecrim": {endereco:"Praça Pedro II, s/n, Alecrim, 59030-000, Natal - RN", telefone:"(84) 3615-2816", email:"saopedroapostolo@yahoo.com"},
-"Paróquia do Bom Jesus das Dores|Ribeira": {endereco:"Praça Cap. José da Penha, 135, Ribeira, 59012-080, Natal - RN", telefone:"(84) 3615-2823 / 99937-2920"},
-"Paróquia de Nossa Senhora Aparecida|Neópolis": {endereco:"Rua Rondônia, 425, Neópolis, 59080-410, Natal - RN", telefone:"(84) 3615-2831", email:"pnsaparecidanatal@hotmail.com"},
-"Paróquia de Nossa Senhora da Candelária|Candelária": {endereco:"Rua Marechal Rondon, 1859, Candelária, 59064-730, Natal - RN", telefone:"(84) 99161-9999", email:"paroquia@paroquiadecandelaria.com.br"},
-"Paróquia de Sant'Ana|Capim Macio": {endereco:"Rua Des. José Gomes da Costa, 1927, Capim Macio, 59082-140, Natal - RN", telefone:"(84) 2020-5323 / 99856-8056", email:"paroquiasantanacmacio@yahoo.com.br"},
-"Paróquia de Santa Rita de Cássia|Ponta Negra": {endereco:"Rua Praia de Itamaracá, 18, Ponta Negra, 59094-510, Natal - RN", telefone:"(84) 3615-2840 / 98896-4232"},
-"Paróquia de Santo Afonso Maria de Ligório|Mirassol": {endereco:"Av. Santos Dumont, s/n, Conj. Mirassol, Capim Macio, 59078-200, Natal - RN", telefone:"(84) 3615-2855", email:"secretariasantoafonso@gmail.com"},
-"Paróquia de São Camilo de Léllis|Lagoa Nova": {endereco:"Rua Pureza, s/n, Lagoa Nova, 59063-170, Natal - RN", telefone:"(84) 3615-2859", email:"saocamilo.natal@gmail.com"},
-"Paróquia de São João Batista|Vila de Ponta Negra": {endereco:"Rua Manoel Coringa de Lemos, 441, Vila de Ponta Negra, 59094-510, Natal - RN", telefone:"(84) 99156-5000"},
-"Paróquia do Sagrado Coração de Jesus|Morro Branco": {endereco:"Av. Antônio Basílio, 3840, Lagoa Nova, 59056-500, Natal - RN", telefone:"(84) 3615-2813 / 99607-0165"},
-"Paróquia de Nossa Senhora Rainha da Paz|Nova Parnamirim": {endereco:"Rua Serra dos Milagres, 01, Nova Parnamirim, 59152-690, Parnamirim - RN", telefone:"(84) 98809-7016", email:"rainhadapaznovaparnamirim@gmail.com"},
-"Paróquia de Nossa Senhora da Conceição|Nova Parnamirim": {endereco:"Rua Cap. Luís Gonzaga, 216, Conj. Isauro Rosado, Nova Parnamirim, 59151-010, Parnamirim - RN", telefone:"(84) 3615-2833 / 99132-9119"},
-"Paróquia de Nossa Senhora de Fátima|Parnamirim": {endereco:"Av. Castor Vieira Régis, 268, Cohabinal, 59140-670, Parnamirim - RN", telefone:"(84) 99434-7122", email:"secretariaparoquialpanfa@gmail.com"},
-"Paróquia de Nossa Senhora do Carmo|Parque das Nações": {endereco:"Av. Eliza Branco Pereira dos Santos, 1357, Parque das Nações, 59158-160, Parnamirim - RN", telefone:"(84) 2020-7663 / 99476-6014", email:"paroquiansdocarmorn@gmail.com"},
-"Paróquia de São Francisco de Assis e São João Lostau|Lostau": {endereco:"Rua João Batista de Lima, s/n, Pirangi do Norte, 59161-570, Parnamirim - RN", email:"pasfapazebem@outlook.com"},
-"Paróquia de São Mateus Moreira|Cidade Verde": {endereco:"Av. dos Eucaliptos, 101, Cidade Verde, 59150-000, Parnamirim - RN", telefone:"(84) 2030-3381 / 98622-4138"},
-"Paróquia de Nossa Senhora Virgem dos Pobres|Emaús, Parnamirim": {endereco:"Rua Dom Bosco, s/n, Emaús, 59148-450, Parnamirim - RN", telefone:"(84) 98844-8247", email:"pascomemaus2017@gmail.com"},
-"Paróquia de Santo André de Soveral|Emaús, Parnamirim": {endereco:"Av. Aeroporto de Petrolina, 626, Conj. Jardim Aeroporto, Emaús, 59149-336, Parnamirim - RN", telefone:"(84) 3643-1355", email:"paroquiadosoveral.financeiro@hotmail.com"},
-"Paróquia de Santos Reis|Parnamirim": {endereco:"Rua Cabo Serafim Nunes Neto, 183, Santos Reis, 59141-170, Parnamirim - RN"},
-"Paróquia de São Miguel Arcanjo|Rosa dos Ventos, Parnamirim": {endereco:"Av. Dr. Mario Negócio, Rosa dos Ventos, 59141-560, Parnamirim - RN", telefone:"(84) 99706-5358"},
-"Paróquia de Nossa Senhora Auxiliadora|Felipe Camarão": {endereco:"Rua Arco-íris, 99, Felipe Camarão, 59074-310, Natal - RN", telefone:"(84) 2131-5519", email:"pnauxiliadora@hotmail.com"},
-"Paróquia de Nossa Senhora da Assunção|Guarapes": {endereco:"Rua Lagoa Nova, 137, Guarapes, 59074-740, Natal - RN"},
-"Paróquia Santuário de Nossa Senhora da Esperança e Santo Inácio de Loyola|Cidade da Esperança": {endereco:"Praça da Matriz, s/n, Cidade da Esperança, 59070-100, Natal - RN", telefone:"(84) 3615-2891", email:"santuarioesperanca@gmail.com"},
-"Paróquia Santuário dos Santos Mártires de Cunhaú e Uruaçu|Nazaré": {endereco:"Av. Miguel Castro, 1002, Nossa Senhora de Nazaré, 59062-000, Natal - RN", telefone:"(84) 98823-9293"},
-"Paróquia de Jesus Bom Pastor|Bom Pastor": {endereco:"Av. Bom Pastor, 1186, Bom Pastor, 59052-080, Natal - RN", email:"secretariabompastor@hotmail.com"},
-"Paróquia de Nossa Senhora do Perpétuo Socorro|Quintas": {endereco:"Rua Luiz Fernandes, s/n, Quintas, 59035-070, Natal - RN", telefone:"(84) 3301-0215 / 99423-1504"},
-"Paróquia de São José|Cidade Nova": {endereco:"Av. Solange Nunes do Nascimento, 687, Cidade Nova, 59072-500, Natal - RN", telefone:"(84) 2131-6228", email:"cnsaojose@gmail.com"},
-"Paróquia de São José de Anchieta|Lagoa Nova": {endereco:"Rua São José de Mipibu, 1515, Lagoa Nova II, 59063-070, Natal - RN", telefone:"(84) 3615-2857 / 99414-2311", email:"paroquiapsjarn@gmail.com"},
-"Paróquia de São Sebastião|Alecrim": {endereco:"Rua Cel. Estevão, 1499, Alecrim, 59035-000, Natal - RN", telefone:"(84) 3615-2874 / 2020-0754", email:"psaosebastiao@outlook.com"},
-"Paróquia de Cristo Rei|Pirangi": {endereco:"Praça Cristo Rei, s/n, Conj. Pirangi, Neópolis, 59086-440, Natal - RN", telefone:"(84) 98820-2830"},
-"Paróquia de Nossa Senhora dos Impossíveis|Pitimbu": {endereco:"Rua Paranapanema, s/n, 2ª etapa do Cidade Satélite, Pitimbu, 59068-330, Natal - RN", telefone:"(84) 98104-3903"},
-"Paróquia de Santa Clara|Pitimbu": {endereco:"Rua Engenheiro Joaquim Cardoso, 475, Pitimbu, 59069-010, Natal - RN", telefone:"(84) 3618-3113", email:"psantaclaranatal@gmail.com"},
-"Paróquia de Santo Ambrósio Francisco Ferro|Planalto": {endereco:"Rua Miramangue, 91, Planalto, 59074-320, Natal - RN", telefone:"(84) 3218-7512"},
-"Paróquia de São Francisco de Assis|Cidade Satélite": {endereco:"Rua Maracanã, s/n, Pitimbu, 59067-280, Natal - RN", telefone:"(84) 3615-2834 / 99610-0652", email:"sfassisparoquia.satelite@gmail.com"},
-"Paróquia da Imaculada Conceição|Conjunto Nova Aliança": {endereco:"Rua José Luís da Silva, 1415, Loteamento Nova Aliança, Nossa Senhora da Apresentação, 59114-230, Natal - RN", telefone:"(84) 98740-7850"},
-"Paróquia de Santa Luzia|Boa Esperança": {endereco:"Av. Nila Jales, 1080, Loteamento Boa Esperança, Lagoa Azul, 59139-444, Natal - RN", telefone:"(84) 2139-6892", email:"secretariapsantaluzia@gmail.com"},
-"Paróquia de Santa Maria Mãe|Conjunto Santa Catarina": {endereco:"Rua Salto Veloso, 1838, Conj. Santa Catarina, Potengi, 59110-280, Natal - RN", telefone:"(84) 3615-2886", email:"paroquiasmmnatal@gmail.com"},
-"Paróquia de Santo Antônio de Pádua|Parque dos Coqueiros": {endereco:"Av. Tomaz Landim, s/n, Conj. Parque dos Coqueiros, Nossa Senhora da Apresentação, 59104-000, Natal - RN", telefone:"(84) 3343-1172", email:"psantoantoniodepadua13@gmail.com"},
-"Paróquia de Sant'Ana|Soledade 2": {endereco:"Av. Ilha de São Paulo, 1110, Conj. Soledade II, Potengi, 59129-130, Natal - RN", telefone:"(84) 3615-2880"},
-"Paróquia de São Tomé Apóstolo|Cidade do Sol": {endereco:"Rua Júpiter, 48, Igapó, Conj. Cidade do Sol, 59106-170, Natal - RN", telefone:"(84) 99661-1174", email:"psaotomeapostolo@gmail.com"},
-"Paróquia de Nossa Senhora da Conceição|Macaíba": {endereco:"Largo Côn. Estevam Dantas, 65, Centro, 59280-000, Macaíba - RN", telefone:"(84) 99195-2682", email:"paroquiademacaiba@hotmail.com"},
-"Paróquia de Nossa Senhora de Fátima|Macaíba": {endereco:"Rua Luiz Varela da Costa, 35, Bairro Vilar, Macaíba - RN", telefone:"(84) 99181-3019", email:"paroquiansfatima_vilar@outlook.com"},
-"Paróquia de Santo Antônio|Santo Antônio do Potengi": {endereco:"Rua João Veras, s/n, Loteamento Solar dos Ipês, Santo Antônio do Potengi, 59298-018, São Gonçalo do Amarante - RN", email:"paroquiadesantoantoniopotengi@gmail.com"},
-"Paróquia de Santo Expedito|Jardim Petrópolis": {endereco:"Rua das Magnólias, 18, Jardim Petrópolis, 59290-000, São Gonçalo do Amarante - RN", telefone:"(84) 99422-4288", email:"paroquiasantoexpeditosga@gmail.com"},
-"Paróquia de São Gonçalo|São Gonçalo do Amarante": {endereco:"Praça Senador Dinarte Mariz, 40, Centro, 59291-619, São Gonçalo do Amarante - RN", telefone:"(84) 3278-2843", email:"psgamarante2013@gmail.com"},
-"Paróquia de São Lucas|Conjunto Amarante": {endereco:"Av. Maranhão, 40, Conjunto Amarante, 59296-644, São Gonçalo do Amarante - RN", telefone:"(84) 3615-2884 / 98629-6454", email:"pslucas1@live.com"},
-"Paróquia de Nossa Senhora dos Navegantes|Redinha": {endereco:"Rua Francisco Ivo, 85, Redinha, 59122-000, Natal - RN", telefone:"(84) 99849-4501", email:"pnsnavegantes.natal@gmail.com"},
-"Paróquia Santuário de Nossa Senhora de Fátima|Parque das Dunas": {endereco:"Rua da Garoupa, 01, Conj. Parque das Dunas IV, Pajuçara, 59132-310, Natal - RN", telefone:"(84) 3615-2882 / 2139-9442 / 99689-0001", email:"santuariodefatimanatal@gmail.com"},
-"Paróquia de São João Batista|Pitangui": {endereco:"Rua Zeferina Lopes, s/n, Centro, Praia de Pitangui, 59575-000, Extremoz - RN", telefone:"(84) 99455-3074", email:"psjbpitangui@gmail.com"},
-"Paróquia de São João Bosco|Gramoré": {endereco:"Av. Guaratinguetá, 682, Conj. Gramoré, Lagoa Azul, 59135-500, Natal - RN", telefone:"(84) 98861-8604"},
-"Paróquia de São Miguel Arcanjo|Extremoz": {endereco:"Praça Prefeito José Franco, s/n, Centro, 59575-000, Extremoz - RN", telefone:"(84) 3279-2716", email:"paroquiaextremoz@gmail.com"},
-"Paróquia de São Tiago Menor|Santarém": {endereco:"Rua Itororó, 48, Conj. Santarém, Potengi, 59124-520, Natal - RN", telefone:"(84) 3346-5010", email:"saotiagonatal@gmail.com"},
-
-// --- Vale do Açu ---
-"Paróquia de Nossa Senhora da Conceição|Lajes": {endereco:"Praça Mons. Vicente, 312, Centro, 59535-000, Lajes - RN", telefone:"(84) 99894-3713"},
-"Paróquia de Nossa Senhora da Conceição|São Rafael": {endereco:"Av. José Pedro de Azevedo, 930, Centro, 59518-000, São Rafael - RN", telefone:"(84) 98779-2383", email:"pnscsaorafaelrn@outlook.com"},
-"Paróquia de Nossa Senhora das Graças|Afonso Bezerra": {endereco:"Praça Francisco das Chagas de Souza, 79, Centro, 59510-000, Afonso Bezerra - RN", telefone:"(84) 98148-6372"},
-"Paróquia de Sant'Ana|Santana do Matos": {endereco:"Rua Coronel Carvalho, 24, Centro, 59520-000, Santana do Matos - RN", telefone:"(84) 99669-4549"},
-"Paróquia de São José|Angicos": {endereco:"Praça José da Penha, 151, Centro, 59515-000, Angicos - RN", telefone:"(84) 99604-8303"},
-"Paróquia de São Paulo Apóstolo|Pedro Avelino": {endereco:"Praça Côn. Antônio Antas, 58, Centro, 59530-000, Pedro Avelino - RN", email:"paroquiadesaopauloapostolopa@yahoo.com.br"},
-"Paróquia de São Vicente Férrer|Itajá": {endereco:"Av. José Juscelino Barbosa, 280, Centro, 59513-000, Itajá - RN", telefone:"(84) 99991-0431", email:"tesouraria.paroquiadeitaja@gmail.com"},
-"Paróquia de Nossa Senhora da Conceição|Guamaré": {endereco:"Rua Luiz de Souza Miranda, 104, Centro, 59598-000, Guamaré - RN", telefone:"(84) 99629-9722"},
-"Paróquia de Nossa Senhora da Conceição|Macau": {endereco:"Praça da Conceição, 65, Centro, 59500-000, Macau - RN", email:"paroquiansdaconceicao@hotmail.com"},
-"Paróquia de Nossa Senhora de Lourdes|Ipanguaçu": {endereco:"Av. Luiz Gonzaga, 804, Centro, 59508-000, Ipanguaçu - RN", telefone:"(84) 99868-8111"},
-"Paróquia de Nossa Senhora do Rosário|Alto do Rodrigues": {endereco:"Av. Álvaro Rodrigues, s/n, Centro, 59507-000, Alto do Rodrigues - RN", telefone:"(84) 92001-9190"},
-"Paróquia de São João Batista|Pendências": {endereco:"Praça São João Batista, 203, Centro, 59504-000, Pendências - RN", telefone:"(84) 99710-3405", email:"psjb_pendencias@hotmail.com"},
-"Paróquia de São José Operário|Jandaíra": {endereco:"Praça Antônio Messias, 116, Centro, 59594-000, Jandaíra - RN", email:"secretariaparoquialjanda@gmail.com"},
-
-// --- Litoral Norte ---
-"Paróquia de Nossa Senhora de Nazaré|Parazinho": {endereco:"Praça Senador João Câmara, 1150, Centro, 59586-000, Parazinho - RN"},
-"Paróquia de Nossa Senhora Mãe dos Homens|João Câmara": {endereco:"Praça Mons. Freitas, 188, Centro, 59550-000, João Câmara - RN", telefone:"(84) 99653-2647", email:"pnsmhomens01@gmail.com"},
-"Paróquia de Nossa Senhora do Livramento|Taipu": {endereco:"Praça Dez de Março, 426, Centro, 59565-000, Taipu - RN", telefone:"(84) 3264-2201", email:"livramentotaipu@gmail.com"},
-"Paróquia do Sagrado Coração de Jesus|Poço Branco": {endereco:"Av. Poço Branco, 145, Centro, 59560-000, Poço Branco - RN", telefone:"(84) 99904-7673"},
-"Paróquia de Santo Antão Abade|São Bento do Norte": {endereco:"Av. Ursulino Silvestre, 92, Centro, 59590-000, São Bento do Norte - RN", email:"paroquiastabade@hotmail.com"},
-"Paróquia de Nossa Senhora da Conceição|Ceará-Mirim": {endereco:"Praça Mons. Celso Cicco, 84, Centro, 59570-000, Ceará-Mirim - RN", telefone:"(84) 3274-2042", email:"paroquianscm@gmail.com"},
-"Paróquia de Nossa Senhora da Conceição|Maxaranguape": {endereco:"Rua Eduardo Silvestre, 27, 59580-000, Maxaranguape - RN", telefone:"(84) 99892-0085"},
-"Paróquia de Nossa Senhora da Conceição|Santa Maria": {endereco:"Rua da Matriz, s/n, Centro, 59464-000, Santa Maria - RN"},
-"Paróquia de Nossa Senhora da Pureza|Pureza": {endereco:"Praça 5 de Abril, 95, Centro, 59582-000, Pureza - RN", telefone:"(84) 99102-6974"},
-"Paróquia de Nossa Senhora das Dores|Ceará-Mirim": {endereco:"Rua Vital Correia, 492, Nova Descoberta, 59570-000, Ceará-Mirim - RN", email:"nsadasdorescm@gmail.com"},
-"Paróquia de Nossa Senhora do Rosário de Fátima|Ceará-Mirim": {endereco:"Rua Santa Terezinha, 205, Conj. Luiz Lopes Varela, 59570-000, Ceará-Mirim - RN", email:"carlosaguiar021@gmail.com"},
-"Paróquia do Bom Jesus dos Navegantes|Touros": {endereco:"Av. Prefeito José Américo, 29, Centro, 59584-000, Touros - RN", telefone:"(84) 99457-9430", email:"bomjesusdosnavegantes@gmail.com"},
-"Área Pastoral de Nossa Senhora dos Navegantes|Rio do Fogo": {endereco:"Rua Vereador José Andrade, s/n, Centro, 59780-000, Rio do Fogo - RN", telefone:"(84) 99633-3035", email:"apnsnavegantes@gmail.com"},
-"Paróquia de São Miguel Arcanjo|São Miguel do Gostoso": {endereco:"Av. dos Arrecifes, 1638, Centro, 59585-000, São Miguel do Gostoso - RN", telefone:"(84) 99401-5974"},
-"Paróquia de Santa Luzia|Touros": {endereco:"Av. Ver. João Teodoro de Souza Filho, 38, Centro, Touros - RN", email:"igrejadesantaluzia13@gmail.br"},
-
-// --- Litoral Sul ---
-"Paróquia de Nossa Senhora da Conceição|Canguaretama": {endereco:"Praça Augusto Severo, 198, Centro, 59190-000, Canguaretama - RN", telefone:"(84) 99219-7918", email:"pnsccangaretama@gmail.com"},
-"Paróquia de Nossa Senhora da Piedade|Espírito Santo": {endereco:"Rua da Matriz, 49, Centro, 59180-000, Espírito Santo - RN", email:"vozdapiedade2020@gmail.com"},
-"Paróquia de Nossa Senhora dos Prazeres|Goianinha": {endereco:"Rua Vigário Antônio Montenegro, 20, Centro, 59173-000, Goianinha - RN", telefone:"(84) 99223-9573", email:"pnspgoianinha@gmail.com"},
-"Paróquia de Santo Antônio de Lisboa|Tibau do Sul": {endereco:"Rua Dr. Hélio Galvão, 100, Centro, 59178-000, Tibau do Sul - RN", telefone:"(84) 3246-4040 / 99827-1666", email:"paroquiadetibaudosul@gmail.com"},
-"Paróquia de São Francisco de Assis|Pedro Velho": {endereco:"Praça São Francisco, 04, Centro, 59196-000, Pedro Velho - RN", telefone:"(84) 98118-9110"},
-"Paróquia de São Pedro Pescador|Baía Formosa": {endereco:"Rua João Cavalcante Filho, s/n, Centro, 59194-000, Baía Formosa - RN", telefone:"(84) 3244-2202", email:"paroquiasaopedropescadorbf@gmail.com"},
-"Paróquia do Divino Espírito Santo|Vera Cruz": {endereco:"Praça do Divino Espírito Santo, 95, Centro, 59184-000, Vera Cruz - RN"},
-"Paróquia de Nossa Senhora da Penha|Monte Alegre": {endereco:"Rua Juvenal Lamartine, s/n, Centro, 59182-000, Monte Alegre - RN", email:"nossasenhoradapenharn@gmail.com"},
-"Paróquia de Nossa Senhora das Dores|Brejinho": {endereco:"Av. Antônio Alves Pessoa, 316, Centro, 59219-000, Brejinho - RN", telefone:"(84) 3283-2385 / 99458-2002", email:"pnsd.brejinho@gmail.com"},
-"Paróquia de Nossa Senhora do Ó|Nísia Floresta": {endereco:"Praça Cel. José Araújo, 81, Centro, 59164-000, Nísia Floresta - RN", telefone:"(84) 98751-1693"},
-"Paróquia de Sant'Ana e São Joaquim|São José de Mipibu": {endereco:"Rua Côn. Lustosa, s/n, Centro, 59162-000, São José de Mipibu - RN", telefone:"(84) 2060-0210 / 99184-1258"},
-"Área Pastoral do Sagrado Coração de Jesus|São José de Mipibu": {endereco:"Rua São José, 65, Distrito de Laranjeiras do Abdias, São José de Mipibu - RN", telefone:"(84) 99466-1892", email:"areapastoralscj@gmail.com"},
-"Paróquia de São João Batista|Arez": {endereco:"Praça Getúlio Vargas, 04, Centro, 59170-000, Arez - RN"},
-
-// --- Trairi e Potengi ---
-"Paróquia de Nossa Senhora de Lourdes|Campo Redondo": {endereco:"Rua Nossa Senhora de Lourdes, 49, Centro, 59230-000, Campo Redondo - RN", telefone:"(84) 98855-3407"},
-"Paróquia de Nossa Senhora do Amparo|Coronel Ezequiel": {endereco:"Praça José Pedro de Farias, 172, Centro, 59200-000, Coronel Ezequiel - RN", email:"paroquiadenossasenhoradoamparo@gmail.com"},
-"Paróquia de Santa Rita de Cássia|Santa Cruz": {endereco:"Praça Presidente Vargas, 80, Centro, 59200-000, Santa Cruz - RN", telefone:"(84) 98810-2112"},
-"Paróquia de Santa Teresinha|Tangará": {endereco:"Praça Major Lula Gomes, 54, Centro, 59240-000, Tangará - RN", telefone:"(84) 99802-0053", email:"psteresinhatangara@hotmail.com"},
-"Paróquia de São Sebastião|Japi": {endereco:"Rua Manoel Medeiros, s/n, Centro, 59213-000, Japi - RN"},
-"Área Pastoral de São Sebastião|Sítio Novo": {endereco:"Rua Sebastião Ferreira de Lima, 100, Centro, 59440-000, Sítio Novo - RN"},
-"Paróquia de Nossa Senhora da Conceição|São Tomé": {endereco:"Rua Ladislau Galvão, 99, Centro, 59400-000, São Tomé - RN", email:"paroquiasaotome@hotmail.com"},
-"Paróquia de Nossa Senhora da Conceição|Serra Caiada": {endereco:"Rua Nossa Senhora da Conceição, 58, Centro, 59245-000, Serra Caiada - RN", telefone:"(84) 98648-0403"},
-"Paróquia de Nossa Senhora do Perpétuo Socorro|Barcelona": {endereco:"Rua Vereador Romário Jatércio Neves, 11, Centro, 59410-000, Barcelona - RN", telefone:"(84) 98151-3249", email:"pppsocorro@gmail.com"},
-"Paróquia do Sagrado Coração de Jesus|Bom Jesus": {endereco:"Rua Pedro Belarmino, 18, Centro, 59270-000, Bom Jesus - RN", telefone:"(84) 98715-6527"},
-"Paróquia de São Paulo Apóstolo|São Paulo do Potengi": {endereco:"Rua Dom Marcolino, 318, Centro, 59460-000, São Paulo do Potengi - RN", telefone:"(84) 99159-4468"},
-"Paróquia do Sagrado Coração de Jesus|Riachuelo": {endereco:"Praça Manoel Severiano, 129, Centro, 59470-000, Riachuelo - RN", telefone:"(84) 99844-3940"},
-"Paróquia de São Pedro Apóstolo|São Pedro": {endereco:"Av. Francisco Cabral, 163, Centro, 59480-000, São Pedro - RN", telefone:"(84) 98830-8485", email:"paroquiasaopedroapostolosprn@yahoo.com.br"},
-
-// --- Agreste ---
-"Paróquia da Imaculada Conceição|Nova Cruz": {endereco:"Rua Diógenes da Cunha Lima, 11, Centro, 59215-000, Nova Cruz - RN", telefone:"(84) 99401-6391"},
-"Paróquia de Nossa Senhora de Fátima|Passa e Fica": {endereco:"Rua Antônio Soares, 549, Centro, 59218-000, Passa e Fica - RN", telefone:"(84) 98718-2965"},
-"Paróquia de Santa Teresinha|Lagoa D'Anta": {endereco:"Rua da Matriz, n.7, Centro, 59227-000, Lagoa D'Anta - RN", email:"paroquiastld@outlook.com"},
-"Paróquia de São Bento Abade|Serra de São Bento": {endereco:"Praça Salviano Gomes Crisanto, s/n, Centro, 59214-000, Serra de São Bento - RN", telefone:"(84) 3289-0112"},
-"Paróquia de São João Batista|Montanhas": {endereco:"Rua Esportiva, 16, Centro, 59198-000, Montanhas - RN", telefone:"(84) 93300-3218", email:"paroquiasjb@gmail.com"},
-"Paróquia de São José|São José de Campestre": {endereco:"Praça São José, 33, Centro, 59275-000, São José de Campestre - RN", telefone:"(84) 99947-0936", email:"paroquiasaojosecampestre@hotmail.com"},
-"Paróquia de Nossa Senhora da Saúde|Boa Saúde": {endereco:"Rua Dr. Mário Câmara, 18, Centro, 59260-000, Boa Saúde - RN", email:"matrizdenossasenhoradasaude@hotmail.com"},
-"Paróquia da Imaculada Conceição|Lagoa Salgada": {endereco:"Praça João Tomaz, s/n, Centro, 59247-000, Lagoa Salgada - RN", telefone:"(84) 98866-1546"},
-"Paróquia de Nossa Senhora da Conceição|Santo Antônio": {endereco:"Av. Lindolfo Gomes Vidal, 100, Centro, 59255-000, Santo Antônio - RN", email:"sapnsconceicao@gmail.com"},
-"Paróquia de São Pedro Apóstolo|Várzea": {endereco:"Rua Dep. José Lúcio Ribeiro, 01, Centro, 59185-000, Várzea - RN", telefone:"(84) 98702-5903"},
-"Paróquia de São Francisco de Assis|Lagoa de Pedras": {endereco:"Rua Coronel Francisco Tomás, s/n, Centro, 59244-000, Lagoa de Pedras - RN", telefone:"(84) 3692-0120"},
-"Paróquia de Santo Antônio|Serrinha": {endereco:"Rua Manoel Joaquim de Souza, 30, Centro, Serrinha - RN", telefone:"(84) 98611-9695"},
-};
-
-function contatoDe(p){ return CONTATOS[p.nome + "|" + p.bairro] || null; }
-
-// ===== vicariatos =====
-const VICARIATOS = {
-// --- Vicariato Urbano 1 ---
-"Paróquia da Catedral|Tirol": "Vicariato Urbano 1",
-"Paróquia da Sagrada Família|Rocas": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora da Apresentação|Cidade Alta": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora da Conceição|Mãe Luiza": "Vicariato Urbano 1",
-"Paróquia de Santa Teresinha|Tirol": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora de Lourdes|Areia Preta": "Vicariato Urbano 1",
-"Paróquia de São João Batista|Lagoa Seca": "Vicariato Urbano 1",
-"Paróquia de São Pedro Apóstolo|Alecrim": "Vicariato Urbano 1",
-"Paróquia do Bom Jesus das Dores|Ribeira": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora Aparecida|Neópolis": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora da Candelária|Candelária": "Vicariato Urbano 1",
-"Paróquia de Sant'Ana|Capim Macio": "Vicariato Urbano 1",
-"Paróquia de Santa Rita de Cássia|Ponta Negra": "Vicariato Urbano 1",
-"Paróquia de Santo Afonso Maria de Ligório|Mirassol": "Vicariato Urbano 1",
-"Paróquia de São Camilo de Léllis|Lagoa Nova": "Vicariato Urbano 1",
-"Paróquia de São João Batista|Vila de Ponta Negra": "Vicariato Urbano 1",
-"Paróquia do Sagrado Coração de Jesus|Morro Branco": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora Rainha da Paz|Nova Parnamirim": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora da Conceição|Nova Parnamirim": "Vicariato Urbano 1",
-"Paróquia de Santos Reis|Parnamirim": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora de Fátima|Parnamirim": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora do Carmo|Parque das Nações": "Vicariato Urbano 1",
-"Paróquia de São Francisco de Assis e São João Lostau|Lostau": "Vicariato Urbano 1",
-"Paróquia de Santo André de Soveral|Emaús, Parnamirim": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora Virgem dos Pobres|Emaús, Parnamirim": "Vicariato Urbano 1",
-"Paróquia de São Mateus Moreira|Cidade Verde": "Vicariato Urbano 1",
-"Paróquia de São Miguel Arcanjo|Rosa dos Ventos, Parnamirim": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora Auxiliadora|Felipe Camarão": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora da Assunção|Guarapes": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora do Perpétuo Socorro|Quintas": "Vicariato Urbano 1",
-"Paróquia de São José|Cidade Nova": "Vicariato Urbano 1",
-"Paróquia de São José de Anchieta|Lagoa Nova": "Vicariato Urbano 1",
-"Paróquia de São Sebastião|Alecrim": "Vicariato Urbano 1",
-"Paróquia Santuário dos Santos Mártires de Cunhaú e Uruaçu|Nazaré": "Vicariato Urbano 1",
-"Paróquia de Jesus Bom Pastor|Bom Pastor": "Vicariato Urbano 1",
-"Paróquia Santuário de Nossa Senhora da Esperança e Santo Inácio de Loyola|Cidade da Esperança": "Vicariato Urbano 1",
-"Paróquia de São Francisco de Assis|Cidade Satélite": "Vicariato Urbano 1",
-"Paróquia de Santa Clara|Pitimbu": "Vicariato Urbano 1",
-"Paróquia de Nossa Senhora dos Impossíveis|Pitimbu": "Vicariato Urbano 1",
-"Paróquia de Santo Ambrósio Francisco Ferro|Planalto": "Vicariato Urbano 1",
-"Paróquia de Cristo Rei|Pirangi": "Vicariato Urbano 1",
-
-// --- Vicariato Urbano 2 ---
-"Paróquia da Imaculada Conceição|Conjunto Nova Aliança": "Vicariato Urbano 2",
-"Paróquia de Santa Luzia|Boa Esperança": "Vicariato Urbano 2",
-"Paróquia de Santa Maria Mãe|Conjunto Santa Catarina": "Vicariato Urbano 2",
-"Paróquia de Santo Antônio de Pádua|Parque dos Coqueiros": "Vicariato Urbano 2",
-"Paróquia de Sant'Ana|Soledade 2": "Vicariato Urbano 2",
-"Paróquia de São Tomé Apóstolo|Cidade do Sol": "Vicariato Urbano 2",
-"Paróquia de Nossa Senhora da Conceição|Macaíba": "Vicariato Urbano 2",
-"Paróquia de Nossa Senhora de Fátima|Macaíba": "Vicariato Urbano 2",
-"Paróquia de Santo Antônio|Santo Antônio do Potengi": "Vicariato Urbano 2",
-"Paróquia de Santo Expedito|Jardim Petrópolis": "Vicariato Urbano 2",
-"Paróquia de São Gonçalo|São Gonçalo do Amarante": "Vicariato Urbano 2",
-"Paróquia de São Lucas|Conjunto Amarante": "Vicariato Urbano 2",
-"Paróquia de Nossa Senhora dos Navegantes|Redinha": "Vicariato Urbano 2",
-"Paróquia Santuário de Nossa Senhora de Fátima|Parque das Dunas": "Vicariato Urbano 2",
-"Paróquia de São João Batista|Pitangui": "Vicariato Urbano 2",
-"Paróquia de São João Bosco|Gramoré": "Vicariato Urbano 2",
-"Paróquia de São Miguel Arcanjo|Extremoz": "Vicariato Urbano 2",
-"Paróquia de São Tiago Menor|Santarém": "Vicariato Urbano 2",
-
-// --- Vicariato Norte 1 ---
-"Paróquia de Nossa Senhora da Conceição|Lajes": "Vicariato Norte 1",
-"Paróquia de Nossa Senhora da Conceição|São Rafael": "Vicariato Norte 1",
-"Paróquia de Nossa Senhora das Graças|Afonso Bezerra": "Vicariato Norte 1",
-"Paróquia de Sant'Ana|Santana do Matos": "Vicariato Norte 1",
-"Paróquia de São José|Angicos": "Vicariato Norte 1",
-"Paróquia de São Paulo Apóstolo|Pedro Avelino": "Vicariato Norte 1",
-"Paróquia de São Vicente Férrer|Itajá": "Vicariato Norte 1",
-"Paróquia de Nossa Senhora da Conceição|Guamaré": "Vicariato Norte 1",
-"Paróquia de Nossa Senhora da Conceição|Macau": "Vicariato Norte 1",
-"Paróquia de Nossa Senhora de Lourdes|Ipanguaçu": "Vicariato Norte 1",
-"Paróquia de Nossa Senhora do Rosário|Alto do Rodrigues": "Vicariato Norte 1",
-"Paróquia de São João Batista|Pendências": "Vicariato Norte 1",
-"Paróquia de São José Operário|Jandaíra": "Vicariato Norte 1",
-
-// --- Vicariato Norte 2 ---
-"Paróquia de Nossa Senhora Mãe dos Homens|João Câmara": "Vicariato Norte 2",
-"Paróquia de Nossa Senhora de Nazaré|Parazinho": "Vicariato Norte 2",
-"Paróquia de Santo Antão Abade|São Bento do Norte": "Vicariato Norte 2",
-"Paróquia de Nossa Senhora do Livramento|Taipu": "Vicariato Norte 2",
-"Paróquia do Sagrado Coração de Jesus|Poço Branco": "Vicariato Norte 2",
-"Paróquia de Nossa Senhora das Dores|Ceará-Mirim": "Vicariato Norte 2",
-"Paróquia de Nossa Senhora do Rosário de Fátima|Ceará-Mirim": "Vicariato Norte 2",
-"Paróquia de Nossa Senhora da Conceição|Ceará-Mirim": "Vicariato Norte 2",
-"Paróquia de Nossa Senhora da Conceição|Maxaranguape": "Vicariato Norte 2",
-"Paróquia de Nossa Senhora da Pureza|Pureza": "Vicariato Norte 2",
-"Paróquia de Nossa Senhora da Conceição|Santa Maria": "Vicariato Norte 2",
-"Paróquia do Bom Jesus dos Navegantes|Touros": "Vicariato Norte 2",
-"Paróquia de Santa Luzia|Touros": "Vicariato Norte 2",
-"Área Pastoral de Nossa Senhora dos Navegantes|Rio do Fogo": "Vicariato Norte 2",
-"Paróquia de São Miguel Arcanjo|São Miguel do Gostoso": "Vicariato Norte 2",
-
-// --- Vicariato Sul 1 ---
-"Paróquia de Nossa Senhora da Conceição|Canguaretama": "Vicariato Sul 1",
-"Paróquia de Nossa Senhora da Piedade|Espírito Santo": "Vicariato Sul 1",
-"Paróquia de Nossa Senhora dos Prazeres|Goianinha": "Vicariato Sul 1",
-"Paróquia de Santo Antônio de Lisboa|Tibau do Sul": "Vicariato Sul 1",
-"Paróquia de São Francisco de Assis|Pedro Velho": "Vicariato Sul 1",
-"Paróquia de São Pedro Pescador|Baía Formosa": "Vicariato Sul 1",
-"Paróquia de São João Batista|Arez": "Vicariato Sul 1",
-"Paróquia de Sant'Ana e São Joaquim|São José de Mipibu": "Vicariato Sul 1",
-"Paróquia do Divino Espírito Santo|Vera Cruz": "Vicariato Sul 1",
-"Paróquia de Nossa Senhora do Ó|Nísia Floresta": "Vicariato Sul 1",
-"Paróquia de Nossa Senhora da Penha|Monte Alegre": "Vicariato Sul 1",
-"Paróquia de Nossa Senhora das Dores|Brejinho": "Vicariato Sul 1",
-"Área Pastoral do Sagrado Coração de Jesus|São José de Mipibu": "Vicariato Sul 1",
-
-// --- Vicariato Sul 2 ---
-"Paróquia de Nossa Senhora de Lourdes|Campo Redondo": "Vicariato Sul 2",
-"Paróquia de Nossa Senhora do Amparo|Coronel Ezequiel": "Vicariato Sul 2",
-"Paróquia de Santa Rita de Cássia|Santa Cruz": "Vicariato Sul 2",
-"Paróquia de Santa Teresinha|Tangará": "Vicariato Sul 2",
-"Área Pastoral de São Sebastião|Sítio Novo": "Vicariato Sul 2",
-"Paróquia de São Sebastião|Japi": "Vicariato Sul 2",
-"Paróquia de Nossa Senhora da Conceição|São Tomé": "Vicariato Sul 2",
-"Paróquia de Nossa Senhora da Conceição|Serra Caiada": "Vicariato Sul 2",
-"Paróquia de Nossa Senhora do Perpétuo Socorro|Barcelona": "Vicariato Sul 2",
-"Paróquia de São Paulo Apóstolo|São Paulo do Potengi": "Vicariato Sul 2",
-"Paróquia de São Pedro Apóstolo|São Pedro": "Vicariato Sul 2",
-"Paróquia do Sagrado Coração de Jesus|Bom Jesus": "Vicariato Sul 2",
-"Paróquia do Sagrado Coração de Jesus|Riachuelo": "Vicariato Sul 2",
-
-// --- Vicariato Sul 3 ---
-"Paróquia da Imaculada Conceição|Nova Cruz": "Vicariato Sul 3",
-"Paróquia de Nossa Senhora de Fátima|Passa e Fica": "Vicariato Sul 3",
-"Paróquia de Santa Teresinha|Lagoa D'Anta": "Vicariato Sul 3",
-"Paróquia de São Bento Abade|Serra de São Bento": "Vicariato Sul 3",
-"Paróquia de São João Batista|Montanhas": "Vicariato Sul 3",
-"Paróquia de São José|São José de Campestre": "Vicariato Sul 3",
-"Paróquia de Nossa Senhora da Conceição|Santo Antônio": "Vicariato Sul 3",
-"Paróquia de São Pedro Apóstolo|Várzea": "Vicariato Sul 3",
-"Paróquia de Santo Antônio|Serrinha": "Vicariato Sul 3",
-"Paróquia de São Francisco de Assis|Lagoa de Pedras": "Vicariato Sul 3",
-"Paróquia da Imaculada Conceição|Lagoa Salgada": "Vicariato Sul 3",
-"Paróquia de Nossa Senhora da Saúde|Boa Saúde": "Vicariato Sul 3",
-};
-DADOS.forEach(p=>{ p.vicariato = VICARIATOS[p.nome + "|" + p.bairro] || null; });
 
 // ===== util =====
 function turnoDe(hora){
@@ -1163,16 +639,24 @@ function fmtHora(h){
   return mm === "00" ? `${horaSemZero}h` : `${horaSemZero}h${mm}`;
 }
 
-// flatten: cada linha = uma paróquia + um horário específico (dia+hora) para facilitar filtragem,
-// mas exibimos agrupado por paróquia.
 function paroquiaTemHorarioEm(p, dia, turno){
   return p.horarios.some(h => (dia==="" || h.dias.includes(Number(dia))) && (turno==="" || turnoDe(h.hora)===turno));
 }
 
-// ===== popular selects =====
-const zonas = [...new Set(DADOS.map(p=>p.zona))].sort();
-const selZona = document.getElementById("f-zona");
-selZona.innerHTML = '<option value="">Todas as regiões</option>' + zonas.map(z=>`<option value="${z}">${z}</option>`).join("");
+function contatoDe(p){ return CONTATOS[p.nome + "|" + p.bairro] || null; }
+
+// ===== popular selects (chamado após dados carregados) =====
+function popularFiltros(){
+  const zonas = [...new Set(DADOS.map(p=>p.zona))].sort();
+  const selZona = document.getElementById("f-zona");
+  selZona.innerHTML = '<option value="">Todas as regiões</option>' + zonas.map(z=>`<option value="${z}">${z}</option>`).join("");
+
+  popularBairros("");
+
+  const vicariatos = [...new Set(DADOS.map(p=>p.vicariato).filter(Boolean))].sort();
+  const selVicariato = document.getElementById("f-vicariato");
+  selVicariato.innerHTML = '<option value="">Todos os vicariatos</option>' + vicariatos.map(v=>`<option value="${v}">${v}</option>`).join("");
+}
 
 function popularBairros(zonaAtual){
   const lista = [...new Set(DADOS.filter(p=>!zonaAtual||p.zona===zonaAtual).map(p=>p.bairro))].sort();
@@ -1181,11 +665,6 @@ function popularBairros(zonaAtual){
   selBairro.innerHTML = '<option value="">Todos os bairros</option>' + lista.map(b=>`<option value="${b}">${b}</option>`).join("");
   if(lista.includes(atual)) selBairro.value = atual;
 }
-popularBairros("");
-
-const vicariatos = [...new Set(DADOS.map(p=>p.vicariato).filter(Boolean))].sort();
-const selVicariato = document.getElementById("f-vicariato");
-selVicariato.innerHTML = '<option value="">Todos os vicariatos</option>' + vicariatos.map(v=>`<option value="${v}">${v}</option>`).join("");
 
 // ===== "missa agora / próxima" =====
 function montarAgora(){
@@ -1218,7 +697,6 @@ function montarAgora(){
       </div>
     </div>`;
 }
-montarAgora();
 
 // ===== render =====
 const lista = document.getElementById("lista");
@@ -1315,7 +793,8 @@ document.getElementById("limpar").addEventListener("click", ()=>{
   render();
 });
 
-render();
+// Inicia carregando dados do Google Sheets
+inicializar();
 
 // Fallback para copiar o e-mail, caso o dispositivo não tenha cliente de e-mail configurado
 const btnCopiar = document.getElementById("copiar-email");
