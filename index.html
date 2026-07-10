@@ -323,6 +323,38 @@
   .voltar-topo:hover{color:var(--azul-profundo);}
   .voltar-topo svg{transition:transform .15s;}
   .voltar-topo:hover svg{transform:translateY(-2px);}
+
+  /* ===== ABAS ===== */
+  .tabs{
+    max-width:1000px; margin:18px auto 0; padding:0 20px;
+    display:flex; gap:8px; flex-wrap:wrap;
+  }
+  .tab-btn{
+    flex:1 1 auto; min-width:120px; padding:12px 16px; border-radius:12px;
+    border:1.5px solid var(--linha); background:var(--branco);
+    color:var(--tinta-leve); font-family:inherit; font-size:14px; font-weight:700;
+    letter-spacing:.01em; cursor:pointer; transition:all .15s;
+    box-shadow:0 8px 18px -12px rgba(13,36,86,.25);
+  }
+  .tab-btn:hover{color:var(--azul-base); border-color:var(--azul-claro);}
+  .tab-btn.ativo{
+    background:linear-gradient(135deg, var(--azul-vivo), var(--azul-base));
+    border-color:transparent; color:var(--branco);
+    box-shadow:0 10px 24px -10px rgba(21,52,140,.55);
+  }
+  .tab-panel{display:none;}
+  .tab-panel.ativo{display:block;}
+  #painel-congregacoes.ativo, #painel-comunidades.ativo{
+    max-width:1000px; margin:0 auto; padding:24px 20px 0; position:relative;
+  }
+  .tipo-tag{
+    font-size:11px; color:var(--branco); background:linear-gradient(135deg,#6b5bd6,#493e9e);
+    padding:4px 10px; border-radius:20px; font-weight:700; letter-spacing:.03em;
+    text-transform:uppercase; white-space:nowrap; box-shadow:0 4px 10px -3px rgba(73,62,158,.5);
+  }
+  .categoria-tag{
+    font-size:10.5px; color:var(--tinta-leve); margin-top:4px; letter-spacing:.02em;
+  }
 </style>
 </head>
 <body id="topo">
@@ -346,7 +378,13 @@
 
 <div id="agora-wrap"></div>
 
-<main>
+<nav class="tabs" role="tablist" aria-label="Seções do diretório">
+  <button class="tab-btn ativo" id="tab-btn-paroquias" role="tab" aria-selected="true" aria-controls="painel-paroquias" data-tab="paroquias">Paróquias</button>
+  <button class="tab-btn" id="tab-btn-congregacoes" role="tab" aria-selected="false" aria-controls="painel-congregacoes" data-tab="congregacoes">Congregações</button>
+  <button class="tab-btn" id="tab-btn-comunidades" role="tab" aria-selected="false" aria-controls="painel-comunidades" data-tab="comunidades">Comunidades</button>
+</nav>
+
+<main id="painel-paroquias" class="tab-panel ativo" role="tabpanel" aria-labelledby="tab-btn-paroquias">
   <section class="filtros" aria-label="Filtros">
     <div class="campo">
       <label for="f-dia">Dia</label>
@@ -400,6 +438,60 @@
 
   <div class="lista" id="lista"></div>
 </main>
+
+<section id="painel-congregacoes" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-congregacoes">
+  <section class="filtros" aria-label="Filtros de congregações">
+    <div class="campo">
+      <label for="cg-tipo">Tipo</label>
+      <select id="cg-tipo">
+        <option value="">Masculinas e femininas</option>
+        <option value="Masculina">Masculina</option>
+        <option value="Feminina">Feminina</option>
+      </select>
+    </div>
+    <div class="campo">
+      <label for="cg-municipio">Município</label>
+      <select id="cg-municipio"></select>
+    </div>
+  </section>
+
+  <div class="linha-busca campo">
+    <label for="cg-busca">Buscar pelo nome da congregação, responsável ou bairro</label>
+    <input type="search" id="cg-busca" placeholder="Ex.: Salesianos, Carmelitas, Alecrim...">
+  </div>
+
+  <div class="resumo">
+    <span class="contagem" id="cg-contagem"></span>
+    <button class="limpar" id="cg-limpar">Limpar filtros</button>
+  </div>
+
+  <div class="lista" id="cg-lista"></div>
+</section>
+
+<section id="painel-comunidades" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-comunidades">
+  <section class="filtros" aria-label="Filtros de comunidades">
+    <div class="campo">
+      <label for="cm-categoria">Categoria</label>
+      <select id="cm-categoria"></select>
+    </div>
+    <div class="campo">
+      <label for="cm-municipio">Município</label>
+      <select id="cm-municipio"></select>
+    </div>
+  </section>
+
+  <div class="linha-busca campo">
+    <label for="cm-busca">Buscar pelo nome da comunidade, responsável ou bairro</label>
+    <input type="search" id="cm-busca" placeholder="Ex.: Shalom, Canção Nova, Tirol...">
+  </div>
+
+  <div class="resumo">
+    <span class="contagem" id="cm-contagem"></span>
+    <button class="limpar" id="cm-limpar">Limpar filtros</button>
+  </div>
+
+  <div class="lista" id="cm-lista"></div>
+</section>
 
 <section class="contato-secao">
   <div class="contato-card">
@@ -470,10 +562,22 @@ function range(a,b){const r=[];for(let i=a;i<=b;i++)r.push(i);return r;}
 // recarrega os dados a cada vez que é aberto.
 // ===================================================
 const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRRmznzLcrRbCJlzu6XTnxI6O0lsz15C4yJyFinvJQcwXSFx-OgDGrnDLiBCEqj2Q/pub?gid=379724804&single=true&output=csv";
+const CONGREGACOES_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTHGu5E9n3eMy1uJMRyG-GKU5wzdf-xQXd5P6aXV69OgAv-qQ3Lx2T1hjOxsxVqNQ/pub?gid=388903406&single=true&output=csv";
+const COMUNIDADES_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRsfjE2kIXg43oADcpEyVQroODSj3-D0mSEWBTPxFOfQa7k5TAhjD3-npghv2gyiw/pub?gid=1309982719&single=true&output=csv";
 
 let DADOS = [];
 let CONTATOS = {};
 let VICARIATOS = {};
+
+// ===== DADOS: CONGREGAÇÕES E COMUNIDADES =====
+// Carregados das planilhas do Google Sheets (mesmo esquema da planilha de
+// paróquias). Preenchidos dinamicamente por inicializarCongregacoes() e
+// inicializarComunidades(). Horários (quando existirem) usam o mesmo
+// formato/parser (parseHorarios) já usado pelas paróquias.
+let CONGREGACOES = [];
+let COMUNIDADES = [];
+
+
 
 // ----- parser de horários (texto → estrutura) -----
 const DIAS_MAP_PT = {Dom:0,Seg:1,Ter:2,"Ter\u00e7a":2,Qua:3,Qui:4,Sex:5,"S\u00e1b":6,Sab:6};
@@ -546,28 +650,32 @@ function mostrarErro(msg) {
 }
 
 // ----- inicialização -----
+// ----- busca um CSV publicado no Google Sheets, tentando proxies CORS em sequência -----
+async function buscarCSV(url) {
+  const proxies = [
+    "https://corsproxy.io/?" + encodeURIComponent(url),
+    "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
+    "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url),
+    url  // direto como último recurso
+  ];
+  for (const proxyUrl of proxies) {
+    try {
+      const resp = await fetch(proxyUrl, { cache: "no-cache" });
+      if (!resp.ok) continue;
+      const t = await resp.text();
+      if (t && t.length > 50) return t;
+    } catch(e) { /* tenta próximo */ }
+  }
+  return null;
+}
+
 async function inicializar() {
   mostrarLoading();
 
   // Detectar se está rodando localmente (file://) — proxies CORS não funcionam nesse caso
   const isLocal = location.protocol === "file:";
 
-  const proxies = [
-    "https://corsproxy.io/?" + encodeURIComponent(SHEET_CSV_URL),
-    "https://api.allorigins.win/raw?url=" + encodeURIComponent(SHEET_CSV_URL),
-    "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(SHEET_CSV_URL),
-    SHEET_CSV_URL  // direto como último recurso
-  ];
-
-  let text = null;
-  for (const url of proxies) {
-    try {
-      const resp = await fetch(url, { cache: "no-cache" });
-      if (!resp.ok) continue;
-      const t = await resp.text();
-      if (t && t.length > 100) { text = t; break; }
-    } catch(e) { /* tenta próximo */ }
-  }
+  const text = await buscarCSV(SHEET_CSV_URL);
 
   if (!text || text.length < 100) {
     const msgLocal = isLocal
@@ -815,6 +923,258 @@ function render(){
       </article>`;
   }).join("");
 }
+
+// ===============================================================
+// CONGREGAÇÕES E COMUNIDADES
+// Dados carregados das planilhas do Google Sheets (mesmo esquema
+// usado nas paróquias). Reaproveita o mesmo cartão visual (.paroquia)
+// e o mesmo parser de horários (parseHorarios), que já mostra pills
+// automaticamente assim que a coluna "Horários" da planilha for preenchida.
+// ===============================================================
+function primeiroTelefoneLimpo(tel){
+  if(!tel) return "";
+  const primeiro = tel.split("/")[0].trim();
+  return primeiro.replace(/[^\d+]/g,"");
+}
+
+function pillsHorarios(horarios){
+  if(!horarios || horarios.length===0) return "";
+  const hojeDia = new Date().getDay();
+  const porHora = {};
+  horarios.forEach(h=>{
+    porHora[h.hora] = porHora[h.hora] || new Set();
+    h.dias.forEach(d=>porHora[h.hora].add(d));
+  });
+  const pills = Object.entries(porHora).map(([hora,diasSet])=>{
+    const diasArr = [...diasSet].sort((a,b)=>a-b);
+    const ehHoje = diasArr.includes(hojeDia);
+    const diasTxt = diasArr.map(d=>DIAS_ABREV[d]).join(", ");
+    return `<span class="pill ${ehHoje?'hoje':''}">${diasTxt} · ${fmtHora(hora)}</span>`;
+  }).join("");
+  return `<div class="horarios">${pills}</div>`;
+}
+
+function cardInstituicao(item, tagTexto, tagClasse){
+  const queryMapa = encodeURIComponent(item.endereco ? item.endereco : item.nome + ", RN");
+  const mapaUrl = `https://www.google.com/maps/search/?api=1&query=${queryMapa}`;
+  const telLimpo = primeiroTelefoneLimpo(item.telefone);
+  const primeiroEmail = (item.email || "").split("/")[0].trim();
+
+  let contatoHtml = "";
+  if(item.endereco || item.telefone || item.email || item.site){
+    contatoHtml = `<div class="contato">
+      ${item.endereco ? `<span class="info">📍 ${item.endereco}</span>` : ""}
+      ${telLimpo ? `<span class="info">📞 <a href="tel:${telLimpo}">${item.telefone}</a></span>` : ""}
+      ${primeiroEmail ? `<span class="info">✉️ <a href="mailto:${primeiroEmail}">${primeiroEmail}</a></span>` : ""}
+      ${item.site ? `<span class="info">🌐 <a href="${item.site}" target="_blank" rel="noopener">Site</a></span>` : ""}
+      <a class="mapa-link" href="${mapaUrl}" target="_blank" rel="noopener">Ver no mapa →</a>
+    </div>`;
+  }
+
+  return `
+    <article class="paroquia">
+      <div class="paroquia-top">
+        <h3>${item.nome}</h3>
+        <span class="${tagClasse}">${tagTexto}</span>
+      </div>
+      ${item.municipio ? `<div class="categoria-tag">${item.municipio}</div>` : ""}
+      ${pillsHorarios(item.horarios)}
+      ${item.responsavel ? `<div class="obs">${item.responsavel}</div>` : ""}
+      ${item.obs ? `<div class="obs">${item.obs}</div>` : ""}
+      ${contatoHtml}
+    </article>`;
+}
+
+// ----- Congregações -----
+function popularFiltrosCongregacoes(){
+  const sel = document.getElementById("cg-municipio");
+  const municipios = [...new Set(CONGREGACOES.map(c=>c.municipio).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">Todos os municípios</option>' + municipios.map(m=>`<option value="${m}">${m}</option>`).join("");
+}
+
+function renderCongregacoes(){
+  const tipo = document.getElementById("cg-tipo").value;
+  const municipio = document.getElementById("cg-municipio").value;
+  const busca = document.getElementById("cg-busca").value.trim().toLowerCase();
+
+  const filtradas = CONGREGACOES.filter(c=>{
+    if(tipo && c.tipo!==tipo) return false;
+    if(municipio && c.municipio!==municipio) return false;
+    if(busca && !(c.nome.toLowerCase().includes(busca) || (c.responsavel||"").toLowerCase().includes(busca) || (c.municipio||"").toLowerCase().includes(busca) || (c.endereco||"").toLowerCase().includes(busca))) return false;
+    return true;
+  });
+
+  const contagem = document.getElementById("cg-contagem");
+  const lista = document.getElementById("cg-lista");
+  contagem.textContent = `${filtradas.length} congregaç${filtradas.length===1?"ão":"ões"} encontrada${filtradas.length===1?"":"s"}`;
+
+  if(filtradas.length===0){
+    lista.innerHTML = `<div class="vazio"><strong>Nenhuma congregação encontrada</strong>Tente ajustar o tipo, o município ou a busca.</div>`;
+    return;
+  }
+  lista.innerHTML = filtradas.map(c=>cardInstituicao(c, c.tipo, "tipo-tag")).join("");
+}
+
+document.getElementById("cg-tipo").addEventListener("change", renderCongregacoes);
+document.getElementById("cg-municipio").addEventListener("change", renderCongregacoes);
+document.getElementById("cg-busca").addEventListener("input", renderCongregacoes);
+document.getElementById("cg-limpar").addEventListener("click", ()=>{
+  document.getElementById("cg-tipo").value = "";
+  document.getElementById("cg-municipio").value = "";
+  document.getElementById("cg-busca").value = "";
+  renderCongregacoes();
+});
+
+// ----- Comunidades -----
+function popularFiltrosComunidades(){
+  const selCat = document.getElementById("cm-categoria");
+  const categorias = [...new Set(COMUNIDADES.map(c=>c.categoria).filter(Boolean))];
+  selCat.innerHTML = '<option value="">Todas as categorias</option>' + categorias.map(c=>`<option value="${c}">${c}</option>`).join("");
+
+  const selMun = document.getElementById("cm-municipio");
+  const municipios = [...new Set(COMUNIDADES.map(c=>c.municipio).filter(Boolean))].sort();
+  selMun.innerHTML = '<option value="">Todos os municípios</option>' + municipios.map(m=>`<option value="${m}">${m}</option>`).join("");
+}
+
+function renderComunidades(){
+  const categoria = document.getElementById("cm-categoria").value;
+  const municipio = document.getElementById("cm-municipio").value;
+  const busca = document.getElementById("cm-busca").value.trim().toLowerCase();
+
+  const filtradas = COMUNIDADES.filter(c=>{
+    if(categoria && c.categoria!==categoria) return false;
+    if(municipio && c.municipio!==municipio) return false;
+    if(busca && !(c.nome.toLowerCase().includes(busca) || (c.responsavel||"").toLowerCase().includes(busca) || (c.municipio||"").toLowerCase().includes(busca) || (c.endereco||"").toLowerCase().includes(busca))) return false;
+    return true;
+  });
+
+  const contagem = document.getElementById("cm-contagem");
+  const lista = document.getElementById("cm-lista");
+  contagem.textContent = `${filtradas.length} comunidade${filtradas.length===1?"":"s"} encontrada${filtradas.length===1?"":"s"}`;
+
+  if(filtradas.length===0){
+    lista.innerHTML = `<div class="vazio"><strong>Nenhuma comunidade encontrada</strong>Tente ajustar a categoria, o município ou a busca.</div>`;
+    return;
+  }
+  lista.innerHTML = filtradas.map(c=>cardInstituicao(c, c.categoria, "bairro-tag")).join("");
+}
+
+document.getElementById("cm-categoria").addEventListener("change", renderComunidades);
+document.getElementById("cm-municipio").addEventListener("change", renderComunidades);
+document.getElementById("cm-busca").addEventListener("input", renderComunidades);
+document.getElementById("cm-limpar").addEventListener("click", ()=>{
+  document.getElementById("cm-categoria").value = "";
+  document.getElementById("cm-municipio").value = "";
+  document.getElementById("cm-busca").value = "";
+  renderComunidades();
+});
+
+// ----- erro específico de uma lista (congregações/comunidades) -----
+function mostrarErroEm(listaId, contagemId, msg, retryFnName){
+  const contagemEl = document.getElementById(contagemId);
+  if(contagemEl) contagemEl.textContent = "";
+  document.getElementById(listaId).innerHTML = `
+    <div class="vazio">
+      <strong>⚠️ Erro ao carregar dados</strong>
+      ${msg}
+      <button onclick="${retryFnName}()" style="margin-top:14px;display:inline-flex;align-items:center;gap:8px;background:#15348c;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">
+        🔄 Tentar novamente
+      </button>
+    </div>`;
+}
+
+// ----- carrega a planilha de Congregações -----
+// Colunas: A=Congregação B=Tipo C=Município D=Horários E=Obs F=Endereço G=Telefone H=Email I=Responsável
+async function inicializarCongregacoes(){
+  document.getElementById("cg-lista").innerHTML = `<div class="vazio">Carregando congregações...</div>`;
+  const text = await buscarCSV(CONGREGACOES_CSV_URL);
+  if(!text || text.length < 30){
+    mostrarErroEm("cg-lista", "cg-contagem", "Não foi possível carregar a planilha de congregações. Verifique sua conexão e tente novamente.", "inicializarCongregacoes");
+    return;
+  }
+  try{
+    const rows = parseCSV(text);
+    CONGREGACOES = [];
+    for(let i=1; i<rows.length; i++){ // linha 0 = cabeçalho
+      const r = rows[i];
+      const nome = (r[0] || "").trim();
+      if(!nome) continue;
+      const tipo      = (r[1] || "").trim();
+      const municipio = (r[2] || "").trim();
+      const horarios  = parseHorarios((r[3] || "").trim());
+      const obs       = (r[4] || "").trim();
+      const endereco  = (r[5] || "").trim();
+      const telefone  = (r[6] || "").trim();
+      const email     = (r[7] || "").trim();
+      const responsavel = (r[8] || "").trim();
+      CONGREGACOES.push({ nome, tipo, municipio, horarios, obs, endereco, telefone, email, responsavel });
+    }
+    popularFiltrosCongregacoes();
+    renderCongregacoes();
+  }catch(err){
+    console.error(err);
+    mostrarErroEm("cg-lista", "cg-contagem", "Não foi possível interpretar os dados da planilha de congregações.<br><small>" + err.message + "</small>", "inicializarCongregacoes");
+  }
+}
+
+// ----- carrega a planilha de Comunidades -----
+// Colunas: A=Comunidade B=Categoria C=Município D=Horários E=Obs F=Endereço G=Telefone H=Email I=Site J=Responsável
+async function inicializarComunidades(){
+  document.getElementById("cm-lista").innerHTML = `<div class="vazio">Carregando comunidades...</div>`;
+  const text = await buscarCSV(COMUNIDADES_CSV_URL);
+  if(!text || text.length < 30){
+    mostrarErroEm("cm-lista", "cm-contagem", "Não foi possível carregar a planilha de comunidades. Verifique sua conexão e tente novamente.", "inicializarComunidades");
+    return;
+  }
+  try{
+    const rows = parseCSV(text);
+    COMUNIDADES = [];
+    for(let i=1; i<rows.length; i++){ // linha 0 = cabeçalho
+      const r = rows[i];
+      const nome = (r[0] || "").trim();
+      if(!nome) continue;
+      const categoria = (r[1] || "").trim();
+      const municipio = (r[2] || "").trim();
+      const horarios  = parseHorarios((r[3] || "").trim());
+      const obs       = (r[4] || "").trim();
+      const endereco  = (r[5] || "").trim();
+      const telefone  = (r[6] || "").trim();
+      const email     = (r[7] || "").trim();
+      const site      = (r[8] || "").trim();
+      const responsavel = (r[9] || "").trim();
+      COMUNIDADES.push({ nome, categoria, municipio, horarios, obs, endereco, telefone, email, site, responsavel });
+    }
+    popularFiltrosComunidades();
+    renderComunidades();
+  }catch(err){
+    console.error(err);
+    mostrarErroEm("cm-lista", "cm-contagem", "Não foi possível interpretar os dados da planilha de comunidades.<br><small>" + err.message + "</small>", "inicializarComunidades");
+  }
+}
+
+// ----- Inicialização das três abas: cada uma busca sua própria planilha -----
+inicializarCongregacoes();
+inicializarComunidades();
+
+// ----- Alternância de abas -----
+const tabBtns = document.querySelectorAll(".tab-btn");
+const tabPaineis = {
+  paroquias: document.getElementById("painel-paroquias"),
+  congregacoes: document.getElementById("painel-congregacoes"),
+  comunidades: document.getElementById("painel-comunidades"),
+};
+tabBtns.forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    const alvo = btn.dataset.tab;
+    tabBtns.forEach(b=>{
+      b.classList.toggle("ativo", b===btn);
+      b.setAttribute("aria-selected", b===btn ? "true" : "false");
+    });
+    Object.entries(tabPaineis).forEach(([nome, painel])=>{
+      painel.classList.toggle("ativo", nome===alvo);
+    });
+  });
+});
 
 document.getElementById("f-dia").addEventListener("change", render);
 document.getElementById("f-turno").addEventListener("change", render);
