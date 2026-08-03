@@ -38,6 +38,12 @@
     --tinta-leve:#5b6c8c;
     --linha:#dde6f7;
     --ouro:#c79a3e;
+    --roxo-noite:#1a1030;
+    --roxo-profundo:#3a2064;
+    --roxo-base:#5b3399;
+    --roxo-vivo:#8257c9;
+    --roxo-claro:#b79bea;
+    --roxo-gelo:#f3eefc;
   }
   *{box-sizing:border-box;}
   body{
@@ -137,6 +143,7 @@
     background:none; border:none; color:var(--azul-base); font-weight:600;
     font-size:13px; cursor:pointer; text-decoration:underline;
   }
+  .limpar-roxo{color:var(--roxo-base);}
 
   /* ===== LIST ===== */
   .lista{display:flex; flex-direction:column; gap:14px;}
@@ -165,6 +172,28 @@
   .vicariato-tag{
     font-size:10.5px; color:var(--tinta-leve); margin-top:4px; letter-spacing:.02em;
   }
+  .tag-instituicao{
+    display:inline-block; font-size:10.5px; font-weight:700; letter-spacing:.02em;
+    padding:3px 9px; border-radius:20px; margin-top:6px;
+  }
+  .tag-matriz{
+    background:linear-gradient(135deg, var(--ouro), #96742a); color:var(--branco);
+  }
+  .tag-capela{
+    background:var(--azul-gelo); color:var(--azul-base); border:1px solid var(--linha);
+  }
+  .paroquia.roxo::before{
+    background:linear-gradient(180deg, var(--roxo-claro), var(--roxo-base));
+  }
+  .confissao-box{
+    margin-top:12px; padding:12px 14px; border-radius:12px;
+    background:linear-gradient(135deg, var(--roxo-gelo), #ffffff);
+    border:1px solid #e3d6f7;
+    display:flex; align-items:flex-start; gap:10px;
+  }
+  .confissao-box .icone{flex-shrink:0; font-size:16px; line-height:1.4;}
+  .confissao-box .texto{font-size:13.5px; color:var(--roxo-profundo); line-height:1.5;}
+  .confissao-box .texto strong{display:block; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--roxo-base); margin-bottom:2px;}
   .horarios{display:flex; flex-wrap:wrap; gap:6px; margin-top:12px;}
   .pill{
     font-size:12.5px; padding:5px 10px; border-radius:8px;
@@ -334,12 +363,17 @@
   }
   .tab-btn{
     flex:1 1 0; min-width:0; width:0; /* força divisão igual, permite encolher abaixo do conteúdo */
-    padding:clamp(9px,2.6vw,13px) clamp(6px,2vw,18px); border-radius:12px;
+    padding:clamp(9px,2.6vw,13px) clamp(4px,1.6vw,18px); border-radius:12px;
     border:1.5px solid var(--linha); background:var(--branco);
-    color:var(--tinta-leve); font-family:inherit; font-size:clamp(11.5px,3.3vw,14px); font-weight:700;
+    color:var(--tinta-leve); font-family:inherit; font-size:clamp(10.5px,3vw,14px); font-weight:700;
     letter-spacing:.01em; cursor:pointer; transition:all .15s;
     box-shadow:0 8px 18px -12px rgba(13,36,86,.25);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .tab-btn .curto{display:none;}
+  @media (max-width:480px){
+    .tab-btn .full{display:none;}
+    .tab-btn .curto{display:inline;}
   }
   .tab-btn:hover{color:var(--azul-base); border-color:var(--azul-claro);}
   .tab-btn.ativo{
@@ -347,14 +381,22 @@
     border-color:transparent; color:var(--branco);
     box-shadow:0 10px 24px -10px rgba(21,52,140,.55);
   }
+  .tab-btn-roxo:hover{color:var(--roxo-base); border-color:var(--roxo-claro);}
+  .tab-btn-roxo.ativo{
+    background:linear-gradient(135deg, var(--roxo-vivo), var(--roxo-base));
+    border-color:transparent; color:var(--branco);
+    box-shadow:0 10px 24px -10px rgba(91,51,153,.55);
+  }
   @media (max-width:360px){
     .tab-btn{ font-size:10.5px; padding:9px 4px; border-radius:10px; }
   }
   .tab-panel{display:none;}
   .tab-panel.ativo{display:block;}
-  #painel-congregacoes.ativo, #painel-comunidades.ativo{
+  #painel-congregacoes.ativo, #painel-comunidades.ativo, #painel-confissao.ativo{
     max-width:1000px; margin:0 auto; padding:24px 20px 0; position:relative;
   }
+  .filtros-roxo{border-color:#e3d6f7;}
+  .filtros-roxo select:focus, .filtros-roxo input:focus{outline-color:var(--roxo-vivo);}
   .tipo-tag{
     font-size:11px; color:var(--branco); background:linear-gradient(135deg,#6b5bd6,#493e9e);
     padding:4px 10px; border-radius:20px; font-weight:700; letter-spacing:.03em;
@@ -388,8 +430,9 @@
 
 <nav class="tabs" role="tablist" aria-label="Seções do diretório">
   <button class="tab-btn ativo" id="tab-btn-paroquias" role="tab" aria-selected="true" aria-controls="painel-paroquias" data-tab="paroquias">Paróquias</button>
-  <button class="tab-btn" id="tab-btn-congregacoes" role="tab" aria-selected="false" aria-controls="painel-congregacoes" data-tab="congregacoes">Congregações</button>
-  <button class="tab-btn" id="tab-btn-comunidades" role="tab" aria-selected="false" aria-controls="painel-comunidades" data-tab="comunidades">Comunidades</button>
+  <button class="tab-btn" id="tab-btn-congregacoes" role="tab" aria-selected="false" aria-controls="painel-congregacoes" data-tab="congregacoes"><span class="full">Congregações</span><span class="curto">Congreg.</span></button>
+  <button class="tab-btn" id="tab-btn-comunidades" role="tab" aria-selected="false" aria-controls="painel-comunidades" data-tab="comunidades"><span class="full">Comunidades</span><span class="curto">Comunid.</span></button>
+  <button class="tab-btn tab-btn-roxo" id="tab-btn-confissao" role="tab" aria-selected="false" aria-controls="painel-confissao" data-tab="confissao">Confissão</button>
 </nav>
 
 <main id="painel-paroquias" class="tab-panel ativo" role="tabpanel" aria-labelledby="tab-btn-paroquias">
@@ -501,6 +544,52 @@
   <div class="lista" id="cm-lista"></div>
 </section>
 
+<section id="painel-confissao" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-confissao">
+  <section class="filtros filtros-roxo" aria-label="Filtros de confissão">
+    <div class="campo">
+      <label for="cf-dia">Dia</label>
+      <select id="cf-dia">
+        <option value="">Todos os dias</option>
+        <option value="0">Domingo</option>
+        <option value="1">Segunda-feira</option>
+        <option value="2">Terça-feira</option>
+        <option value="3">Quarta-feira</option>
+        <option value="4">Quinta-feira</option>
+        <option value="5">Sexta-feira</option>
+        <option value="6">Sábado</option>
+      </select>
+    </div>
+    <div class="campo">
+      <label for="cf-vicariato">Vicariato</label>
+      <select id="cf-vicariato"></select>
+    </div>
+    <div class="campo">
+      <label for="cf-zonal">Zonal</label>
+      <select id="cf-zonal"></select>
+    </div>
+    <div class="campo">
+      <label for="cf-municipio">Município</label>
+      <select id="cf-municipio"></select>
+    </div>
+    <div class="campo">
+      <label for="cf-bairro">Bairro/Localidade</label>
+      <select id="cf-bairro"></select>
+    </div>
+  </section>
+
+  <div class="linha-busca campo">
+    <label for="cf-busca">Buscar pelo nome da paróquia ou bairro</label>
+    <input type="search" id="cf-busca" placeholder="Ex.: Tirol, São Pedro, Lagoa Nova...">
+  </div>
+
+  <div class="resumo">
+    <span class="contagem" id="cf-contagem"></span>
+    <button class="limpar limpar-roxo" id="cf-limpar">Limpar filtros</button>
+  </div>
+
+  <div class="lista" id="cf-lista"></div>
+</section>
+
 <section class="contato-secao">
   <div class="contato-card">
     <div class="icone">✉️</div>
@@ -586,6 +675,38 @@ let CONGREGACOES = [];
 let COMUNIDADES = [];
 
 
+
+// ----- extrai dias da semana citados em texto livre (usado pela aba Confissão) -----
+const DIA_PALAVRAS = {
+  "domingo":0, "dom":0,
+  "segunda":1, "segunda-feira":1, "seg":1,
+  "terca":2, "terça":2, "terca-feira":2, "ter":2,
+  "quarta":3, "quarta-feira":3, "qua":3,
+  "quinta":4, "quinta-feira":4, "qui":4,
+  "sexta":5, "sexta-feira":5, "sex":5,
+  "sabado":6, "sábado":6, "sab":6, "sáb":6
+};
+function normalizarTexto(s){
+  return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+function extrairDiasDoTexto(texto){
+  const norm = normalizarTexto(texto);
+  const dias = new Set();
+  const rangeRe = /(segunda|terca|quarta|quinta|sexta|sabado|domingo)(?:-feira)?\s*(?:a|à|ate|até)\s*(segunda|terca|quarta|quinta|sexta|sabado|domingo)(?:-feira)?/g;
+  let m;
+  while ((m = rangeRe.exec(norm))) {
+    const ini = DIA_PALAVRAS[m[1]], fim = DIA_PALAVRAS[m[2]];
+    if (ini !== undefined && fim !== undefined) {
+      if (ini <= fim) { for (let d = ini; d <= fim; d++) dias.add(d); }
+      else { for (let d = ini; d <= 6; d++) dias.add(d); for (let d = 0; d <= fim; d++) dias.add(d); }
+    }
+  }
+  Object.keys(DIA_PALAVRAS).forEach(palavra => {
+    const re = new RegExp("\\b" + palavra.normalize("NFD").replace(/[\u0300-\u036f]/g, "") + "\\b", "g");
+    if (re.test(norm)) dias.add(DIA_PALAVRAS[palavra]);
+  });
+  return [...dias];
+}
 
 // ----- parser de horários (texto → estrutura) -----
 const DIAS_MAP_PT = {Dom:0,Seg:1,Ter:2,"Ter\u00e7a":2,Qua:3,Qui:4,Sex:5,"S\u00e1b":6,Sab:6};
@@ -723,6 +844,7 @@ async function inicializar() {
     for (let i = dataStart; i < rows.length; i++) {
       const r = rows[i];
       // Colunas: A=Paróquia B=Bairro C=Município D=Vicariato E=Zonal F=Horários G=Obs H=Endereço I=Telefone J=E-mail
+      // K=Tag (Matriz / Pertence a matriz de X) L=Confissão (texto livre)
       const nome      = (r[0] || "").trim();
       const bairro    = (r[1] || "").trim();
       const municipio = (r[2] || "").trim();
@@ -733,12 +855,15 @@ async function inicializar() {
       const endereco  = (r[7] || "").trim();
       const telefone  = (r[8] || "").trim();
       const email     = (r[9] || "").trim();
+      const tag       = (r[10] || "").trim();
+      const confissao = (r[11] || "").trim();
 
       if (!nome) continue;
 
       const horarios = parseHorarios(horTxt);
+      const confissaoDias = confissao ? extrairDiasDoTexto(confissao) : [];
       const key = nome + "|" + bairro + "|" + municipio;
-      DADOS.push({ nome, bairro, municipio, vicariato: vicar || null, zonal: zonal || null, horarios, obs });
+      DADOS.push({ nome, bairro, municipio, vicariato: vicar || null, zonal: zonal || null, horarios, obs, tag: tag || null, confissao: confissao || null, confissaoDias });
       if (endereco || telefone || email)
         CONTATOS[key] = { endereco, telefone, email };
     }
@@ -749,6 +874,8 @@ async function inicializar() {
     popularFiltros();
     montarAgora();
     render();
+    popularFiltrosConfissao();
+    renderConfissao();
     esconderLoading();
 
   } catch (err) {
@@ -925,6 +1052,7 @@ function render(){
           <span class="bairro-tag">${p.municipio && p.municipio !== "Natal" ? p.municipio : p.bairro}</span>
         </div>
         ${p.vicariato ? `<div class="vicariato-tag">${p.vicariato}${p.zonal ? " · " + p.zonal : ""}</div>` : ""}
+        ${p.tag ? `<div class="tag-instituicao ${p.tag==='Matriz' ? 'tag-matriz' : 'tag-capela'}">${p.tag}</div>` : ""}
         <div class="horarios">${pills}</div>
         ${p.obs ? `<div class="obs">${p.obs}</div>` : ""}
         ${contatoHtml}
@@ -1160,6 +1288,146 @@ async function inicializarComunidades(){
   }
 }
 
+// ===============================================================
+// CONFISSÃO
+// Reaproveita os mesmos DADOS já carregados na aba Paróquias (mesma
+// planilha, colunas K=Tag e L=Confissão). Mostra apenas entradas que
+// têm texto de confissão preenchido. O filtro de Dia usa os dias
+// citados no próprio texto (extrairDiasDoTexto), já calculados em
+// p.confissaoDias no momento do carregamento.
+// ===============================================================
+function paroquiasComConfissao(){
+  return DADOS.filter(p => p.confissao);
+}
+
+function popularFiltrosConfissao(){
+  const base = paroquiasComConfissao();
+
+  const vicariatos = [...new Set(base.map(p=>p.vicariato).filter(Boolean))].sort();
+  document.getElementById("cf-vicariato").innerHTML =
+    '<option value="">Todos os vicariatos</option>' + vicariatos.map(v=>`<option value="${v}">${v}</option>`).join("");
+
+  popularZonaisConfissao("");
+  popularMunicipiosConfissao("","");
+  popularBairrosConfissao("","","");
+}
+
+function popularZonaisConfissao(vicAtual){
+  const base = paroquiasComConfissao();
+  const lista = [...new Set(base.filter(p=>!vicAtual||p.vicariato===vicAtual).map(p=>p.zonal).filter(Boolean))]
+    .sort((a,b)=>parseInt(a)-parseInt(b));
+  const sel = document.getElementById("cf-zonal");
+  const atual = sel.value;
+  sel.innerHTML = '<option value="">Todos os zonais</option>' + lista.map(z=>`<option value="${z}">${z}</option>`).join("");
+  if(lista.includes(atual)) sel.value = atual;
+}
+
+function popularMunicipiosConfissao(vicAtual, zonalAtual){
+  const base = paroquiasComConfissao();
+  const lista = [...new Set(base.filter(p=>(!vicAtual||p.vicariato===vicAtual)&&(!zonalAtual||p.zonal===zonalAtual)).map(p=>p.municipio).filter(Boolean))].sort();
+  const sel = document.getElementById("cf-municipio");
+  const atual = sel.value;
+  sel.innerHTML = '<option value="">Todos os municípios</option>' + lista.map(m=>`<option value="${m}">${m}</option>`).join("");
+  if(lista.includes(atual)) sel.value = atual;
+}
+
+function popularBairrosConfissao(vicAtual, zonalAtual, municipioAtual){
+  const base = paroquiasComConfissao();
+  const lista = [...new Set(base.filter(p=>
+    (!vicAtual||p.vicariato===vicAtual) && (!zonalAtual||p.zonal===zonalAtual) && (!municipioAtual||p.municipio===municipioAtual)
+  ).map(p=>p.bairro))].sort();
+  const sel = document.getElementById("cf-bairro");
+  const atual = sel.value;
+  sel.innerHTML = '<option value="">Todos os bairros</option>' + lista.map(b=>`<option value="${b}">${b}</option>`).join("");
+  if(lista.includes(atual)) sel.value = atual;
+}
+
+function renderConfissao(){
+  const dia       = document.getElementById("cf-dia").value;
+  const vicariato = document.getElementById("cf-vicariato").value;
+  const zonal     = document.getElementById("cf-zonal").value;
+  const municipio = document.getElementById("cf-municipio").value;
+  const bairro    = document.getElementById("cf-bairro").value;
+  const busca     = document.getElementById("cf-busca").value.trim().toLowerCase();
+
+  const filtradas = paroquiasComConfissao().filter(p=>{
+    if(vicariato && p.vicariato!==vicariato) return false;
+    if(zonal && p.zonal!==zonal) return false;
+    if(municipio && p.municipio!==municipio) return false;
+    if(bairro && p.bairro!==bairro) return false;
+    if(dia && !p.confissaoDias.includes(Number(dia))) return false;
+    if(busca && !(p.nome.toLowerCase().includes(busca) || p.bairro.toLowerCase().includes(busca) || (p.municipio||"").toLowerCase().includes(busca))) return false;
+    return true;
+  });
+
+  const contagem = document.getElementById("cf-contagem");
+  const lista = document.getElementById("cf-lista");
+  contagem.textContent = `${filtradas.length} paróquia${filtradas.length===1?"":"s"} com confissão encontrada${filtradas.length===1?"":"s"}`;
+
+  if(filtradas.length===0){
+    lista.innerHTML = `<div class="vazio"><strong>Nenhum horário de confissão encontrado</strong>Tente ajustar o dia ou a região selecionados.</div>`;
+    return;
+  }
+
+  lista.innerHTML = filtradas.map(p=>{
+    const c = contatoDe(p);
+    let contatoHtml = "";
+    if(c){
+      const queryMapa = encodeURIComponent((c.endereco ? c.endereco + ", " : "") + p.nome);
+      const mapaUrl = `https://www.google.com/maps/search/?api=1&query=${queryMapa}`;
+      contatoHtml = `<div class="contato">
+        ${c.endereco ? `<span class="info">📍 ${c.endereco}</span>` : ""}
+        ${c.telefone ? `<span class="info">📞 <a href="tel:${c.telefone.replace(/[^\d+]/g,"")}">${c.telefone}</a></span>` : ""}
+        ${c.email ? `<span class="info">✉️ <a href="mailto:${c.email}">${c.email}</a></span>` : ""}
+        <a class="mapa-link" href="${mapaUrl}" target="_blank" rel="noopener">Ver no mapa →</a>
+      </div>`;
+    }
+    return `
+      <article class="paroquia roxo">
+        <div class="paroquia-top">
+          <h3>${p.nome}</h3>
+          <span class="bairro-tag">${p.municipio && p.municipio !== "Natal" ? p.municipio : p.bairro}</span>
+        </div>
+        ${p.vicariato ? `<div class="vicariato-tag">${p.vicariato}${p.zonal ? " · " + p.zonal : ""}</div>` : ""}
+        ${p.tag ? `<div class="tag-instituicao ${p.tag==='Matriz' ? 'tag-matriz' : 'tag-capela'}">${p.tag}</div>` : ""}
+        <div class="confissao-box">
+          <span class="icone">🙏</span>
+          <span class="texto"><strong>Horário de confissão</strong>${p.confissao}</span>
+        </div>
+        ${contatoHtml}
+      </article>`;
+  }).join("");
+}
+
+document.getElementById("cf-dia").addEventListener("change", renderConfissao);
+document.getElementById("cf-vicariato").addEventListener("change", ()=>{
+  popularZonaisConfissao(document.getElementById("cf-vicariato").value);
+  popularMunicipiosConfissao(document.getElementById("cf-vicariato").value, document.getElementById("cf-zonal").value);
+  popularBairrosConfissao(document.getElementById("cf-vicariato").value, document.getElementById("cf-zonal").value, document.getElementById("cf-municipio").value);
+  renderConfissao();
+});
+document.getElementById("cf-zonal").addEventListener("change", ()=>{
+  popularMunicipiosConfissao(document.getElementById("cf-vicariato").value, document.getElementById("cf-zonal").value);
+  popularBairrosConfissao(document.getElementById("cf-vicariato").value, document.getElementById("cf-zonal").value, document.getElementById("cf-municipio").value);
+  renderConfissao();
+});
+document.getElementById("cf-municipio").addEventListener("change", ()=>{
+  popularBairrosConfissao(document.getElementById("cf-vicariato").value, document.getElementById("cf-zonal").value, document.getElementById("cf-municipio").value);
+  renderConfissao();
+});
+document.getElementById("cf-bairro").addEventListener("change", renderConfissao);
+document.getElementById("cf-busca").addEventListener("input", renderConfissao);
+document.getElementById("cf-limpar").addEventListener("click", ()=>{
+  document.getElementById("cf-dia").value = "";
+  document.getElementById("cf-vicariato").value = "";
+  document.getElementById("cf-zonal").value = "";
+  document.getElementById("cf-municipio").value = "";
+  document.getElementById("cf-bairro").value = "";
+  document.getElementById("cf-busca").value = "";
+  popularFiltrosConfissao();
+  renderConfissao();
+});
+
 // ----- Inicialização das três abas: cada uma busca sua própria planilha -----
 inicializarCongregacoes();
 inicializarComunidades();
@@ -1170,6 +1438,7 @@ const tabPaineis = {
   paroquias: document.getElementById("painel-paroquias"),
   congregacoes: document.getElementById("painel-congregacoes"),
   comunidades: document.getElementById("painel-comunidades"),
+  confissao: document.getElementById("painel-confissao"),
 };
 tabBtns.forEach(btn=>{
   btn.addEventListener("click", ()=>{
