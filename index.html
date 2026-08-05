@@ -1,6 +1,14 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
+<!-- ===== Google Analytics (GA4) ===== -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-JQ96S2YG25"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-JQ96S2YG25');
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Horários de Missa — Arquidiocese de Natal</title>
@@ -1450,6 +1458,9 @@ tabBtns.forEach(btn=>{
     Object.entries(tabPaineis).forEach(([nome, painel])=>{
       painel.classList.toggle("ativo", nome===alvo);
     });
+    if (typeof gtag === "function") {
+      gtag("event", "troca_de_aba", { aba: alvo });
+    }
   });
 });
 
