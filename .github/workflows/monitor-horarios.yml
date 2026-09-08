@@ -1,0 +1,42 @@
+name: Monitorar horários de missa (site oficial)
+
+on:
+  schedule:
+    # Toda segunda-feira, 09:00 no horário de Brasília (12:00 UTC)
+    - cron: "0 12 * * 1"
+  workflow_dispatch: {}  # permite rodar manualmente pela aba Actions, pra testar
+
+permissions:
+  contents: write
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: pip install requests beautifulsoup4
+
+      - name: Verificar mudanças e enviar e-mail se necessário
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+        run: python monitor/verificar_mudancas.py
+
+      - name: Salvar o novo snapshot no repositório (se mudou)
+        run: |
+          if [ "$(cat monitor/.mudou)" = "1" ] || [ -n "$(git status --porcelain monitor/snapshots)" ]; then
+            git config user.name "monitor-horarios-bot"
+            git config user.email "actions@github.com"
+            git add monitor/snapshots
+            git commit -m "Atualiza snapshot dos horários de missa (verificação automática)" || echo "Nada para commitar"
+            git push
+          fi
