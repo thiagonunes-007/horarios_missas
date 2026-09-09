@@ -1,0 +1,62 @@
+name: Atualizar dados das planilhas (paróquias, congregações, comunidades)
+
+# Baixa direto do Google Sheets (sem depender de proxy CORS de terceiro,
+# que já ficou fora do ar antes) e salva como arquivo do próprio site em
+# horarios_missas/dados/*.csv. O app lê esse arquivo primeiro (mesma origem,
+# sem CORS, funciona offline com o Service Worker) e só cai pro Google Sheets
+# direto como último recurso.
+
+on:
+  schedule:
+    # A cada 6 horas
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}  # permite rodar manualmente pela aba Actions
+
+permissions:
+  contents: write
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o repositório
+        uses: actions/checkout@v4
+
+      - name: Baixar as planilhas publicadas do Google Sheets
+        run: |
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
+          mkdir -p horarios_missas/dados
+
+          curl -sL -A "$UA" \
+            "https://docs.google.com/spreadsheets/d/e/2PACX-1vReinkN2hotKj0uaoKBbAMkktMvbPprxd0rkPG3dMULK_6U06Rt_rAd1nxBOpMt4g/pub?gid=958938765&single=true&output=csv" \
+            -o horarios_missas/dados/paroquias.csv
+
+          curl -sL -A "$UA" \
+            "https://docs.google.com/spreadsheets/d/e/2PACX-1vTHGu5E9n3eMy1uJMRyG-GKU5wzdf-xQXd5P6aXV69OgAv-qQ3Lx2T1hjOxsxVqNQ/pub?gid=388903406&single=true&output=csv" \
+            -o horarios_missas/dados/congregacoes.csv
+
+          curl -sL -A "$UA" \
+            "https://docs.google.com/spreadsheets/d/e/2PACX-1vRsfjE2kIXg43oADcpEyVQroODSj3-D0mSEWBTPxFOfQa7k5TAhjD3-npghv2gyiw/pub?gid=1309982719&single=true&output=csv" \
+            -o horarios_missas/dados/comunidades.csv
+
+      - name: Conferir se algum arquivo veio vazio ou pequeno demais (proteção)
+        run: |
+          for f in paroquias congregacoes comunidades; do
+            tamanho=$(wc -c < "horarios_missas/dados/$f.csv")
+            if [ "$tamanho" -lt 200 ]; then
+              echo "::error::$f.csv veio com apenas $tamanho bytes — Google Sheets pode estar fora do ar ou a URL mudou. Abortando para não sobrescrever dados bons com um arquivo vazio."
+              exit 1
+            fi
+          done
+
+      - name: Salvar no repositório (se mudou)
+        run: |
+          if [ -n "$(git status --porcelain horarios_missas/dados)" ]; then
+            git config user.name "atualizar-dados-bot"
+            git config user.email "actions@github.com"
+            git add horarios_missas/dados
+            git commit -m "Atualiza dados das planilhas (automático)"
+            git push
+          else
+            echo "Nenhuma mudança nas planilhas desde a última atualização."
+          fi

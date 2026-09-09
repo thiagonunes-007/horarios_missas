@@ -4,12 +4,11 @@
 // Google Play) e (2) evitar tela em branco quando o usuário abre o app sem
 // internet, servindo o último "app shell" salvo em cache.
 //
-// Importante: os dados (planilhas de paróquias/congregações/comunidades)
-// NUNCA são cacheados aqui — são sempre buscados da rede, para que a
-// atualização da planilha no Google Sheets reflita imediatamente no app.
-// Só o "esqueleto" do app (HTML/ícones/manifest) fica em cache.
+// Importante: os dados (dados/*.csv e o Google Sheets/proxies) sempre
+// tentam a rede primeiro — o cache só entra em ação se o dispositivo estiver
+// offline, nunca para "economizar" uma requisição que teria sucesso.
 
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const CACHE_NAME = "missas-app-shell-" + CACHE_VERSION;
 
 const APP_SHELL = [
@@ -63,6 +62,22 @@ self.addEventListener("fetch", (event) => {
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req).catch(() => caches.match("./index.html"))
+    );
+    return;
+  }
+
+  // Espelho local dos dados (dados/*.csv, atualizado por Action a cada 6h):
+  // rede primeiro (pra nunca mostrar planilha desatualizada com internet
+  // disponível), cache só como último recurso quando estiver offline.
+  if (url.pathname.includes("/dados/")) {
+    event.respondWith(
+      fetch(req).then((resp) => {
+        if (resp && resp.ok) {
+          const clone = resp.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
+        }
+        return resp;
+      }).catch(() => caches.match(req))
     );
     return;
   }

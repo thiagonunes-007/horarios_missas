@@ -828,6 +828,9 @@ function mostrarErro(msg) {
 
 // ----- inicialização -----
 // ----- busca um CSV publicado no Google Sheets, tentando proxies CORS em sequência -----
+// (os proxies públicos já ficaram indisponíveis antes — ver buscarDados abaixo,
+// que tenta primeiro o espelho local em dados/*.csv, mantido atualizado por
+// uma GitHub Action, e só cai aqui como último recurso)
 async function buscarCSV(url) {
   const proxies = [
     "https://corsproxy.io/?" + encodeURIComponent(url),
@@ -846,13 +849,27 @@ async function buscarCSV(url) {
   return null;
 }
 
+// ----- busca os dados: primeiro o espelho local (mesma origem, sem CORS,
+// atualizado a cada 6h por Action), só recorrendo ao Google Sheets/proxies
+// se o arquivo local não existir ou vier vazio -----
+async function buscarDados(caminhoLocal, urlPlanilha) {
+  try {
+    const resp = await fetch(caminhoLocal, { cache: "no-cache" });
+    if (resp.ok) {
+      const t = await resp.text();
+      if (t && t.length > 50) return t;
+    }
+  } catch (e) { /* segue pro Google Sheets */ }
+  return await buscarCSV(urlPlanilha);
+}
+
 async function inicializar() {
   mostrarLoading();
 
   // Detectar se está rodando localmente (file://) — proxies CORS não funcionam nesse caso
   const isLocal = location.protocol === "file:";
 
-  const text = await buscarCSV(SHEET_CSV_URL);
+  const text = await buscarDados("dados/paroquias.csv", SHEET_CSV_URL);
 
   if (!text || text.length < 100) {
     const msgLocal = isLocal
@@ -1271,7 +1288,7 @@ function mostrarErroEm(listaId, contagemId, msg, retryFnName){
 // Colunas: A=Congregação B=Tipo C=Município D=Horários E=Obs F=Endereço G=Telefone H=Email I=Responsável
 async function inicializarCongregacoes(){
   document.getElementById("cg-lista").innerHTML = `<div class="vazio">Carregando congregações...</div>`;
-  const text = await buscarCSV(CONGREGACOES_CSV_URL);
+  const text = await buscarDados("dados/congregacoes.csv", CONGREGACOES_CSV_URL);
   if(!text || text.length < 30){
     mostrarErroEm("cg-lista", "cg-contagem", "Não foi possível carregar a planilha de congregações. Verifique sua conexão e tente novamente.", "inicializarCongregacoes");
     return;
@@ -1305,7 +1322,7 @@ async function inicializarCongregacoes(){
 // Colunas: A=Comunidade B=Categoria C=Município D=Horários E=Obs F=Endereço G=Telefone H=Email I=Site J=Responsável
 async function inicializarComunidades(){
   document.getElementById("cm-lista").innerHTML = `<div class="vazio">Carregando comunidades...</div>`;
-  const text = await buscarCSV(COMUNIDADES_CSV_URL);
+  const text = await buscarDados("dados/comunidades.csv", COMUNIDADES_CSV_URL);
   if(!text || text.length < 30){
     mostrarErroEm("cm-lista", "cm-contagem", "Não foi possível carregar a planilha de comunidades. Verifique sua conexão e tente novamente.", "inicializarComunidades");
     return;
